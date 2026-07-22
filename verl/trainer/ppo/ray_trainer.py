@@ -144,7 +144,9 @@ def compute_spec_decode_metrics(
     """Aggregate per-request speculative decoding stats.
 
     Ratios are computed per request and then averaged, so long and short
-    responses have equal metric weight.
+    responses have equal metric weight. Raw totals are also retained so
+    downstream observers can compute weighted rates or compare runtime work
+    across rollout engines without reconstructing counters from averages.
 
     The three inputs come from the rollout engine (vLLM request spec-decode
     stats or sglang ``meta_info["spec_*"]`` keys). Either all three are ``None``
@@ -179,6 +181,9 @@ def compute_spec_decode_metrics(
 
     n = len(drafts)
     return {
+        "rollout/spec_num_draft_tokens": float(sum(drafts)),
+        "rollout/spec_num_accepted_tokens": float(sum(accepts)),
+        "rollout/spec_num_verify_steps": float(sum(verifies)),
         "rollout/spec_accept_rate": float(sum(per_sample_accept_rate) / n),
         "rollout/spec_accept_length": float(sum(per_sample_accept_length) / n),
     }

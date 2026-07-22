@@ -27,6 +27,9 @@ def test_spec_decode_metrics_detect_drafts_with_zero_acceptance():
         spec_verifies=np.array([1, 1, 1]),
     )
 
+    assert metrics["rollout/spec_num_draft_tokens"] == 9.0
+    assert metrics["rollout/spec_num_accepted_tokens"] == 0.0
+    assert metrics["rollout/spec_num_verify_steps"] == 3.0
     assert metrics["rollout/spec_accept_rate"] == 0.0
     assert metrics["rollout/spec_accept_length"] == 1.0
 
@@ -38,6 +41,9 @@ def test_spec_decode_metrics_report_nonzero_acceptance_after_recovery():
         spec_verifies=np.array([1, 1, 1]),
     )
 
+    assert metrics["rollout/spec_num_draft_tokens"] == 9.0
+    assert metrics["rollout/spec_num_accepted_tokens"] == 6.0
+    assert metrics["rollout/spec_num_verify_steps"] == 3.0
     assert metrics["rollout/spec_accept_rate"] > 0.0
     assert metrics["rollout/spec_accept_length"] > 1.0
 
@@ -50,5 +56,8 @@ def test_spec_decode_metrics_drop_padded_placeholders():
         non_padding_mask=np.array([True, False, False]),
     )
 
+    assert metrics["rollout/spec_num_draft_tokens"] == 3.0
+    assert metrics["rollout/spec_num_accepted_tokens"] == 3.0
+    assert metrics["rollout/spec_num_verify_steps"] == 1.0
     assert metrics["rollout/spec_accept_rate"] == 1.0
     assert metrics["rollout/spec_accept_length"] == 4.0
