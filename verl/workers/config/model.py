@@ -23,7 +23,31 @@ from verl.utils.fs import copy_to_local
 from verl.utils.import_utils import import_external_libs
 from verl.utils.model import get_generation_config, update_model_config
 
-__all__ = ["HFModelConfig", "MtpConfig"]
+__all__ = ["BitsAndBytesQuantizationConfig", "HFModelConfig", "MtpConfig"]
+
+
+@dataclass
+class BitsAndBytesQuantizationConfig(BaseConfig):
+    """bitsandbytes weight quantization used by the Hugging Face FSDP loader.
+
+    The initial supported training path is 4-bit QLoRA. The quantized base
+    weights remain frozen while PEFT LoRA parameters are optimized.
+    """
+
+    enable: bool = False
+    load_in_4bit: bool = True
+    quant_type: str = "nf4"
+    compute_dtype: str = "bf16"
+    use_double_quant: bool = True
+    quant_storage: str = "bf16"
+
+    def __post_init__(self):
+        if not self.enable:
+            return
+        if not self.load_in_4bit:
+            raise ValueError("bitsandbytes quantization currently supports only 4-bit QLoRA")
+        if self.quant_type not in {"nf4", "fp4"}:
+            raise ValueError(f"Unsupported bitsandbytes 4-bit quantization type: {self.quant_type}")
 
 
 @dataclass
@@ -117,12 +141,16 @@ class HFModelConfig(BaseConfig):
     enable_gradient_checkpointing: bool = True
     enable_activation_offload: bool = False
 
+    # bitsandbytes weight quantization for FSDP QLoRA
+    bitsandbytes: BitsAndBytesQuantizationConfig = field(default_factory=BitsAndBytesQuantizationConfig)
+
     use_remove_padding: bool = True
 
     # TODO: unify fsdp and megatron lora config
     # fsdp lora related. We may setup a separate config later
     lora_rank: int = 0
     lora_alpha: int = 16
+    lora_dropout: float = 0.0
     target_modules: Optional[Any] = "all-linear"  # allow both "all-linear" and ["q_proj","k_proj"]
     target_parameters: Optional[list[str]] = None  # for lora adapter on nn.Parameter
 
@@ -146,6 +174,21 @@ class HFModelConfig(BaseConfig):
     mtp: MtpConfig = field(default_factory=MtpConfig)
 
     def __post_init__(self):
+        # Validate local-only fields before performing model or tokenizer I/O.
+        if self.target_modules is not None:
+            if not isinstance(self.target_modules, (str | list)):
+                raise TypeError(
+                    "target_modules must be a string or a list of strings, "
+                    f"but got {type(self.target_modules).__name__}"
+                )
+            if isinstance(self.target_modules, list):
+                for item in self.target_modules:
+                    if not isinstance(item, str):
+                        raise TypeError(
+                            "All elements in target_modules list must be strings, "
+                            f"but found {type(item).__name__}"
+                        )
+
         import_external_libs(self.external_lib)
 
         if self.hf_config_path is None:
@@ -242,20 +285,6 @@ class HFModelConfig(BaseConfig):
                 self.hf_config.mtp_num_hidden_layers = 0
             if hasattr(self.hf_config, "text_config") and hasattr(self.hf_config.text_config, "mtp_num_hidden_layers"):
                 self.hf_config.text_config.mtp_num_hidden_layers = 0
-
-        # Ensure target_modules is a str or list[str] (only if not None)
-        if self.target_modules is not None:
-            if not isinstance(self.target_modules, (str | list)):
-                raise TypeError(
-                    "target_modules must be a string or a list of strings, "
-                    f"but got {type(self.target_modules).__name__}"
-                )
-            if isinstance(self.target_modules, list):
-                for x in self.target_modules:
-                    if not isinstance(x, str):
-                        raise TypeError(
-                            f"All elements in target_modules list must be strings, but found {type(x).__name__}"
-                        )
 
     def get_processor(self):
         return self.processor if self.processor is not None else self.tokenizer

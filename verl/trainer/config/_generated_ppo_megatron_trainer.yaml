@@ -438,9 +438,18 @@ actor_rollout_ref:
     override_config: {}
     enable_gradient_checkpointing: true
     enable_activation_offload: false
+    bitsandbytes:
+      _target_: verl.workers.config.BitsAndBytesQuantizationConfig
+      enable: false
+      load_in_4bit: true
+      quant_type: nf4
+      compute_dtype: bf16
+      use_double_quant: true
+      quant_storage: bf16
     use_remove_padding: true
     lora_rank: 0
     lora_alpha: 16
+    lora_dropout: 0.0
     target_modules: all-linear
     exclude_modules: null
     lora_adapter_path: null
@@ -685,9 +694,18 @@ critic:
     override_config: {}
     enable_gradient_checkpointing: true
     enable_activation_offload: false
+    bitsandbytes:
+      _target_: verl.workers.config.BitsAndBytesQuantizationConfig
+      enable: false
+      load_in_4bit: true
+      quant_type: nf4
+      compute_dtype: bf16
+      use_double_quant: true
+      quant_storage: bf16
     use_remove_padding: true
     lora_rank: 0
     lora_alpha: 16
+    lora_dropout: 0.0
     target_modules: all-linear
     exclude_modules: null
     lora_adapter_path: null
