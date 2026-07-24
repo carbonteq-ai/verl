@@ -2,9 +2,10 @@
 
 ## Status
 
-**Candidate / unpublished.** This checkout has no CarbonTeq remote yet. It is
-research and integration evidence, not a reproducible framework dependency,
-until the maintained remote exists and the commits below are pushed.
+**Published candidate.** The maintained CarbonTeq fork exists and the SAMPO
+implementation branch is published. GPU qualification remains a release gate,
+so this is a reproducible candidate dependency rather than a production-
+qualified backend.
 
 Upstream repository: `https://github.com/verl-project/verl.git`
 
@@ -12,12 +13,13 @@ Upstream base: `a35908ca3c9632859c58d6a2855d858918ae21dc`
 
 Expected remotes after publication:
 
-- `origin`: `https://github.com/carbonteq-ai/verl.git`
+- `origin`: `git@github.com:carbonteq-ai/verl.git`
 - `upstream`: `https://github.com/verl-project/verl.git`
 
 Current local branch: `codex/sampo-agentic-advantages`
 
-Published fork commit: not yet published.
+Published SAMPO implementation commit:
+`8a718e5be7a107587f63967336ece333a5c160e1`.
 
 ## Maintained delta
 
@@ -110,5 +112,4 @@ configuration contract. Upstream GSPO support by itself is insufficient.
 - Similarity-based fuzzy anchor grouping is intentionally unsupported; stable
   exact anchor keys are the reproducible contract.
 - A GPU quality or convergence claim is deferred until the release gate runs.
-- Publication and an immutable framework pin are deferred until a CarbonTeq
-  remote exists.
+- Production qualification is deferred until the GPU gate passes.
