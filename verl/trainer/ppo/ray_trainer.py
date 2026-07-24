@@ -260,6 +260,19 @@ def compute_advantage(
         }
         if "uid" in data.non_tensor_batch:  # optional
             adv_kwargs["index"] = data.non_tensor_batch["uid"]
+        if adv_estimator in (AdvantageEstimator.SAMPO, "sampo"):
+            required = ("sampo_turn_spans", "sampo_anchor_state_keys", "sampo_step_rewards")
+            missing = [name for name in required if name not in data.non_tensor_batch]
+            if missing:
+                raise ValueError(f"SAMPO rollout metadata is missing: {', '.join(missing)}")
+            adv_kwargs.update(
+                {
+                    "turn_spans": data.non_tensor_batch["sampo_turn_spans"],
+                    "anchor_state_keys": data.non_tensor_batch["sampo_anchor_state_keys"],
+                    "step_rewards": data.non_tensor_batch["sampo_step_rewards"],
+                    "num_repeat": num_repeat,
+                }
+            )
         if "reward_baselines" in data.batch:  # optional
             adv_kwargs["reward_baselines"] = data.batch["reward_baselines"]
         # GDPO: pass raw data for per-dimension reward extraction

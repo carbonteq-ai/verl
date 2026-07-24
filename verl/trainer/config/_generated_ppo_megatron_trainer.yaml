@@ -879,6 +879,11 @@ algorithm:
   lam: 1.0
   adv_estimator: gae
   norm_adv_by_std_in_grpo: true
+  sampo:
+    _target_: verl.trainer.config.SampoConfig
+    discount_gamma: 0.95
+    step_advantage_weight: 1.0
+    advantage_normalization: mean
   use_kl_in_reward: false
   kl_penalty: kl
   kl_ctrl:

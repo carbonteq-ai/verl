@@ -17,7 +17,13 @@ from typing import Any, Optional
 
 from verl.base_config import BaseConfig
 
-__all__ = ["AlgoConfig", "FilterGroupsConfig", "KLControlConfig", "RolloutCorrectionConfig"]
+__all__ = [
+    "AlgoConfig",
+    "FilterGroupsConfig",
+    "KLControlConfig",
+    "RolloutCorrectionConfig",
+    "SampoConfig",
+]
 
 
 @dataclass
@@ -54,6 +60,20 @@ class FilterGroupsConfig(BaseConfig):
     enable: bool = False
     metric: Optional[str] = None
     max_num_gen_batches: int = 0
+
+
+@dataclass
+class SampoConfig(BaseConfig):
+    """Configuration for SAMPO's GiGPO-style hierarchical advantages.
+
+    SAMPO combines these advantages with the existing GSPO policy loss. Turn
+    spans and anchor-state keys arrive from an agent loop through the
+    ``DataProto.non_tensor_batch``.
+    """
+
+    discount_gamma: float = 0.95
+    step_advantage_weight: float = 1.0
+    advantage_normalization: str = "mean"
 
 
 @dataclass
@@ -658,6 +678,7 @@ class AlgoConfig(BaseConfig):
     use_pf_ppo: bool = False
     pf_ppo: dict[str, Any] = field(default_factory=dict)
     filter_groups: Optional[FilterGroupsConfig] = None
+    sampo: SampoConfig = field(default_factory=SampoConfig)
     # Rollout Correction: corrects off-policy issues (policy mismatch, model staleness, distribution shifts)
     # Set to None to disable, use RolloutCorrectionConfig presets (e.g., .tis(), .mis()), or pass dict
     rollout_correction: Optional[RolloutCorrectionConfig] = None
