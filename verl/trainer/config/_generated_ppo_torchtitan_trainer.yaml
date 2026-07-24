@@ -806,6 +806,12 @@ algorithm:
     discount_gamma: 0.95
     step_advantage_weight: 1.0
     advantage_normalization: mean
+  filter_groups:
+    _target_: verl.trainer.config.FilterGroupsConfig
+    enable: false
+    metric: null
+    max_num_gen_batches: 0
+    max_inflight_gen_batches: 1
   use_kl_in_reward: false
   kl_penalty: kl
   kl_ctrl:
@@ -908,6 +914,7 @@ trainer:
     sampler:
       max_off_policy_threshold: 8
       max_off_policy_strategy: drop
+      sync_refill_failed_groups: false
       custom_sampler:
         path: null
         name: null
