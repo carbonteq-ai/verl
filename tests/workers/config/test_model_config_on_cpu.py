@@ -17,7 +17,7 @@ import os
 import pytest
 from omegaconf import OmegaConf
 
-from verl.workers.config.model import HFModelConfig
+from verl.workers.config.model import BitsAndBytesQuantizationConfig, HFModelConfig
 
 
 class TestHFModelConfigCPU:
@@ -94,3 +94,27 @@ class TestHFModelConfigCPU:
         merged_config = OmegaConf.merge(base_config, invalid_cli_config)
         with pytest.raises(TypeError):
             OmegaConf.to_object(merged_config)
+
+    def test_bitsandbytes_qlora_config_merges_from_cli(self):
+        cfg_from_dataclass = OmegaConf.structured(HFModelConfig)
+        cli_config = OmegaConf.create(
+            {
+                "path": self.model_path,
+                "bitsandbytes": {
+                    "enable": True,
+                    "quant_type": "nf4",
+                    "compute_dtype": "bf16",
+                    "quant_storage": "bf16",
+                },
+            }
+        )
+
+        merged = OmegaConf.merge(cfg_from_dataclass, cli_config)
+
+        assert merged.bitsandbytes.enable is True
+        assert merged.bitsandbytes.quant_type == "nf4"
+        assert merged.bitsandbytes.quant_storage == "bf16"
+
+    def test_bitsandbytes_rejects_unsupported_quant_type(self):
+        with pytest.raises(ValueError, match="Unsupported bitsandbytes"):
+            BitsAndBytesQuantizationConfig(enable=True, quant_type="int4")

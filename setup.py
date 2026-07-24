@@ -50,6 +50,7 @@ TEST_REQUIRES = ["pytest", "pre-commit", "py-spy", "pytest-asyncio", "pytest-rer
 PRIME_REQUIRES = ["pyext"]
 GEO_REQUIRES = ["mathruler", "torchvision", "qwen_vl_utils"]
 GPU_REQUIRES = ["liger-kernel", "flash-attn"]
+QLORA_REQUIRES = ["bitsandbytes>=0.43.3"]
 MATH_REQUIRES = ["math-verify"]  # Add math-verify as an optional dependency
 VLLM_REQUIRES = ["tensordict>=0.8.0,<=0.10.0,!=0.9.0", "vllm>=0.8.5,<=0.12.0"]
 TRTLLM_REQUIRES = ["tensorrt-llm>=1.2.0rc6"]
@@ -67,6 +68,7 @@ extras_require = {
     "prime": PRIME_REQUIRES,
     "geo": GEO_REQUIRES,
     "gpu": GPU_REQUIRES,
+    "qlora": QLORA_REQUIRES,
     "math": MATH_REQUIRES,
     "vllm": VLLM_REQUIRES,
     "sglang": SGLANG_REQUIRES,

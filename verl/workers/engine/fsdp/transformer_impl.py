@@ -140,6 +140,10 @@ class FSDPEngine(BaseEngine):
         self._is_offload_param = self.engine_config.param_offload
         self._is_offload_optimizer = self.engine_config.optimizer_offload
         self._is_lora = self.model_config.lora_rank > 0
+        if self.model_config.bitsandbytes.enable and not self._is_lora:
+            raise ValueError("bitsandbytes 4-bit training requires lora_rank > 0 (QLoRA)")
+        if self.model_config.bitsandbytes.enable and self.model_config.model_type != "language_model":
+            raise ValueError("bitsandbytes QLoRA currently supports only language models")
         # Set in _build_fsdp_module when FSDP2 CPUOffloadPolicy is configured (see #5995).
         self._uses_fsdp2_cpu_offload_policy = False
 
@@ -240,8 +244,10 @@ class FSDPEngine(BaseEngine):
 
         torch_dtype = PrecisionType.to_dtype(torch_dtype)
 
+        use_bitsandbytes = self.model_config.bitsandbytes.enable
         init_context = get_init_weight_context_manager(
-            use_meta_tensor=not self.model_config.hf_config.tie_word_embeddings, mesh=self.device_mesh
+            use_meta_tensor=not self.model_config.hf_config.tie_word_embeddings and not use_bitsandbytes,
+            mesh=self.device_mesh,
         )
 
         with init_context(), warnings.catch_warnings():
@@ -250,11 +256,30 @@ class FSDPEngine(BaseEngine):
             if self.model_config.model_type == "language_model":
                 auto_class = get_hf_auto_model_class(hf_config=self.model_config.hf_config)
 
+                model_kwargs = {}
+                if use_bitsandbytes:
+                    from transformers import BitsAndBytesConfig
+
+                    bnb_config = self.model_config.bitsandbytes
+                    model_kwargs.update(
+                        {
+                            "device_map": {"": get_device_id()},
+                            "quantization_config": BitsAndBytesConfig(
+                                load_in_4bit=bnb_config.load_in_4bit,
+                                bnb_4bit_quant_type=bnb_config.quant_type,
+                                bnb_4bit_compute_dtype=PrecisionType.to_dtype(bnb_config.compute_dtype),
+                                bnb_4bit_use_double_quant=bnb_config.use_double_quant,
+                                bnb_4bit_quant_storage=PrecisionType.to_dtype(bnb_config.quant_storage),
+                            ),
+                        }
+                    )
+
                 module = auto_class.from_pretrained(
                     pretrained_model_name_or_path=self.model_config.local_path,
                     torch_dtype=torch_dtype,
                     config=self.model_config.hf_config,
                     trust_remote_code=self.model_config.trust_remote_code,
+                    **model_kwargs,
                 )
 
                 # Strip sub-modules listed in _verl_strip_modules (e.g.
@@ -306,14 +331,24 @@ class FSDPEngine(BaseEngine):
                 fused_kernels_backend=fused_kernels_backend,
             )
 
-            # some parameters may not in torch_dtype
-            module.to(torch_dtype)
+            # Quantized bitsandbytes modules cannot be cast after loading.
+            if not use_bitsandbytes:
+                # some parameters may not in torch_dtype
+                module.to(torch_dtype)
 
-            if self.model_config.enable_gradient_checkpointing:
+            if self.model_config.enable_gradient_checkpointing and not use_bitsandbytes:
                 module.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         return module
 
     def _build_lora_module(self, module):
+        if self.model_config.bitsandbytes.enable:
+            from peft import prepare_model_for_kbit_training
+
+            prepare_kwargs = {"use_gradient_checkpointing": self.model_config.enable_gradient_checkpointing}
+            if "gradient_checkpointing_kwargs" in signature(prepare_model_for_kbit_training).parameters:
+                prepare_kwargs["gradient_checkpointing_kwargs"] = {"use_reentrant": False}
+            module = prepare_model_for_kbit_training(module, **prepare_kwargs)
+
         module.enable_input_require_grads()
 
         lora_adapter_path = getattr(self.model_config, "lora_adapter_path", None)
@@ -337,6 +372,7 @@ class FSDPEngine(BaseEngine):
                 "task_type": TaskType.CAUSAL_LM,
                 "r": self.model_config.lora_rank,
                 "lora_alpha": self.model_config.lora_alpha,
+                "lora_dropout": self.model_config.lora_dropout,
                 "target_modules": convert_to_regular_types(self.model_config.target_modules),
                 "target_parameters": convert_to_regular_types(self.model_config.target_parameters),
                 "exclude_modules": convert_to_regular_types(self.model_config.exclude_modules),

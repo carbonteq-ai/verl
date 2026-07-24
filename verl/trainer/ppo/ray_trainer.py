@@ -144,7 +144,9 @@ def compute_spec_decode_metrics(
     """Aggregate per-request speculative decoding stats.
 
     Ratios are computed per request and then averaged, so long and short
-    responses have equal metric weight.
+    responses have equal metric weight. Raw totals are also retained so
+    downstream observers can compute weighted rates or compare runtime work
+    across rollout engines without reconstructing counters from averages.
 
     The three inputs come from the rollout engine (vLLM request spec-decode
     stats or sglang ``meta_info["spec_*"]`` keys). Either all three are ``None``
@@ -179,6 +181,9 @@ def compute_spec_decode_metrics(
 
     n = len(drafts)
     return {
+        "rollout/spec_num_draft_tokens": float(sum(drafts)),
+        "rollout/spec_num_accepted_tokens": float(sum(accepts)),
+        "rollout/spec_num_verify_steps": float(sum(verifies)),
         "rollout/spec_accept_rate": float(sum(per_sample_accept_rate) / n),
         "rollout/spec_accept_length": float(sum(per_sample_accept_length) / n),
     }
@@ -255,6 +260,19 @@ def compute_advantage(
         }
         if "uid" in data.non_tensor_batch:  # optional
             adv_kwargs["index"] = data.non_tensor_batch["uid"]
+        if adv_estimator in (AdvantageEstimator.SAMPO, "sampo"):
+            required = ("sampo_turn_spans", "sampo_anchor_state_keys", "sampo_step_rewards")
+            missing = [name for name in required if name not in data.non_tensor_batch]
+            if missing:
+                raise ValueError(f"SAMPO rollout metadata is missing: {', '.join(missing)}")
+            adv_kwargs.update(
+                {
+                    "turn_spans": data.non_tensor_batch["sampo_turn_spans"],
+                    "anchor_state_keys": data.non_tensor_batch["sampo_anchor_state_keys"],
+                    "step_rewards": data.non_tensor_batch["sampo_step_rewards"],
+                    "num_repeat": num_repeat,
+                }
+            )
         if "reward_baselines" in data.batch:  # optional
             adv_kwargs["reward_baselines"] = data.batch["reward_baselines"]
         # GDPO: pass raw data for per-dimension reward extraction

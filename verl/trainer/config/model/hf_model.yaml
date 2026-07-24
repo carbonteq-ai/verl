@@ -36,6 +36,29 @@ enable_gradient_checkpointing: True
 # whether to enable activation offload. Only valid when we use hf model definition
 enable_activation_offload: False
 
+# bitsandbytes weight quantization for FSDP QLoRA
+bitsandbytes:
+
+  _target_: verl.workers.config.BitsAndBytesQuantizationConfig
+
+  # whether to quantize the frozen base model with bitsandbytes
+  enable: False
+
+  # whether to load the base weights in 4-bit
+  load_in_4bit: True
+
+  # 4-bit quantization data type: nf4 or fp4
+  quant_type: nf4
+
+  # arithmetic data type used by 4-bit linear layers
+  compute_dtype: bf16
+
+  # whether to apply nested quantization to quantization constants
+  use_double_quant: True
+
+  # floating storage data type used to make quantized parameters shardable by FSDP
+  quant_storage: bf16
+
 # whether to use remove padding. Only valid when we use hf model definition
 use_remove_padding: True
 
@@ -44,6 +67,9 @@ lora_rank: 0
 
 # LoRA scaling factor
 lora_alpha: 16
+
+# LoRA dropout probability
+lora_dropout: 0.0
 
 # Target modules for LoRA adaptation
 target_modules: all-linear
