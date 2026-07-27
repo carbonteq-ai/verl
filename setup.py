@@ -30,6 +30,7 @@ install_requires = [
     "dill",
     "hydra-core",
     "numpy>=2.0.0",
+    "orjson",
     "pandas",
     "peft",
     "pyarrow>=19.0.0",
@@ -40,7 +41,7 @@ install_requires = [
     "tensordict>=0.8.0,<=0.10.0,!=0.9.0",
     # 5.6.0 ships a broken flash-attention path (crashes on s_aux=None for
     # sink-less models); fixed in 5.6.1. See huggingface/transformers#45588.
-    "transformers<5.12.0,!=5.6.0",
+    "transformers<5.15.0,!=5.6.0",
     "wandb",
     "packaging>=20.0",
     "tensorboard",
@@ -52,7 +53,7 @@ GEO_REQUIRES = ["mathruler", "torchvision", "qwen_vl_utils"]
 GPU_REQUIRES = ["liger-kernel", "flash-attn"]
 QLORA_REQUIRES = ["bitsandbytes>=0.43.3"]
 MATH_REQUIRES = ["math-verify"]  # Add math-verify as an optional dependency
-VLLM_REQUIRES = ["tensordict>=0.8.0,<=0.10.0,!=0.9.0", "vllm>=0.8.5,<=0.12.0"]
+VLLM_REQUIRES = ["tensordict>=0.8.0,<=0.10.0,!=0.9.0", "vllm>=0.18.0,<0.26.0"]
 TRTLLM_REQUIRES = ["tensorrt-llm>=1.2.0rc6"]
 SGLANG_REQUIRES = [
     "tensordict>=0.8.0,<=0.10.0,!=0.9.0",

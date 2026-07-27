@@ -21,6 +21,7 @@ Utility classes for manage and request LLM servers:
 import asyncio
 import logging
 import os
+import urllib.request
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -41,6 +42,60 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 DEFAULT_ROUTING_CACHE_SIZE = 10000
+_SPEC_DECODE_COUNTERS = {
+    "vllm:spec_decode_num_drafts": "drafts",
+    "vllm:spec_decode_num_draft_tokens": "draft_tokens",
+    "vllm:spec_decode_num_accepted_tokens": "accepted_tokens",
+}
+
+
+def parse_spec_decode_prometheus(text: str) -> dict[str, float]:
+    """Extract aggregate speculative-decoding counters from Prometheus text."""
+    counters = {name: 0.0 for name in _SPEC_DECODE_COUNTERS.values()}
+    found = set()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        metric, _, raw_value = line.rpartition(" ")
+        metric_name = metric.split("{", 1)[0]
+        if metric_name.endswith("_total"):
+            metric_name = metric_name[: -len("_total")]
+        normalized_name = _SPEC_DECODE_COUNTERS.get(metric_name)
+        if normalized_name is None:
+            continue
+        counters[normalized_name] += float(raw_value)
+        found.add(normalized_name)
+    return counters if found else {}
+
+
+def compute_spec_decode_counter_delta(
+    current: dict[str, float], previous: dict[str, float]
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Convert process-lifetime vLLM counters into one-rollout-batch metrics."""
+    if not current:
+        return {}, previous
+    delta = {
+        name: value - previous.get(name, 0.0) if value >= previous.get(name, 0.0) else value
+        for name, value in current.items()
+    }
+    drafts = delta.get("drafts", 0.0)
+    draft_tokens = delta.get("draft_tokens", 0.0)
+    accepted_tokens = delta.get("accepted_tokens", 0.0)
+    metrics = {
+        "rollout/spec_num_drafts": drafts,
+        "rollout/spec_num_draft_tokens": draft_tokens,
+        "rollout/spec_num_accepted_tokens": accepted_tokens,
+        "rollout/spec_accept_rate": accepted_tokens / draft_tokens if draft_tokens > 0 else 0.0,
+        "rollout/spec_accept_length": 1.0 + accepted_tokens / drafts if drafts > 0 else 0.0,
+    }
+    return metrics, current
+
+
+def _fetch_spec_decode_counters(address: str) -> dict[str, float]:
+    url = address if "://" in address else f"http://{address}"
+    with urllib.request.urlopen(f"{url}/metrics", timeout=5) as response:  # noqa: S310 - trusted rollout server
+        return parse_spec_decode_prometheus(response.read().decode("utf-8"))
 
 
 @ray.remote
@@ -450,6 +505,8 @@ class LLMServerManager:
         self.worker_group = worker_group
         self.rollout_resource_pool = rollout_resource_pool
         self.start_rank = start_rank
+        self._last_spec_decode_counters: dict[str, float] = {}
+        self._warned_spec_decode_metrics = False
 
         assert worker_group is not None or self.rollout_config.nnodes > 0, "nnodes must be > 0 in standalone mode"
 
@@ -579,6 +636,29 @@ class LLMServerManager:
     def get_replicas(self) -> list[RolloutReplica]:
         """Get the LLM server replicas."""
         return self.rollout_replicas
+
+    @auto_await
+    async def collect_spec_decode_metrics(self) -> dict[str, float]:
+        """Return step-local MTP metrics from aggregate vLLM counters."""
+        mtp = getattr(self.model_config, "mtp", None)
+        if mtp is None or not mtp.enable or not mtp.enable_rollout:
+            return {}
+        try:
+            snapshots = await asyncio.gather(
+                *[asyncio.to_thread(_fetch_spec_decode_counters, address) for address in self.server_addresses]
+            )
+            current = {
+                name: sum(snapshot.get(name, 0.0) for snapshot in snapshots) for name in _SPEC_DECODE_COUNTERS.values()
+            }
+            metrics, self._last_spec_decode_counters = compute_spec_decode_counter_delta(
+                current, self._last_spec_decode_counters
+            )
+            return metrics
+        except Exception as error:
+            if not self._warned_spec_decode_metrics:
+                logger.warning("Unable to collect vLLM speculative-decoding counters: %s", error)
+                self._warned_spec_decode_metrics = True
+            return {}
 
     @auto_await
     async def start_profile(self, **kwargs):

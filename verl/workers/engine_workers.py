@@ -667,6 +667,9 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             self.base_sync_done: bool = "dummy" not in self.config.rollout.load_format
             self.layered_summon = self.config.rollout.get("layered_summon", False)
             self.peft_merge: bool = model_config.lora.get("merge", False)
+            self.lora_as_adapter: bool = (
+                model_config.lora_rank > 0 or model_config.lora.get("rank", 0) > 0
+            ) and not self.peft_merge
 
         # 4. build checkpoint engine
         if "actor" in self.role:
@@ -758,6 +761,21 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             return metrics or {}
 
         set_expandable_segments(False)
+
+        # In adapter mode collect_lora_params materializes the tiny adapter on CPU,
+        # and parameter offload releases the actor model before returning. Do this
+        # before waking the full rollout model: waking first unnecessarily overlaps
+        # both full model copies and can OOM on otherwise viable single-GPU jobs.
+        staged_adapter = getattr(self, "lora_as_adapter", False) and self.base_sync_done
+        if staged_adapter:
+            per_tensor_param, peft_config = self.actor.engine.get_per_tensor_param(
+                layered_summon=self.layered_summon, base_sync_done=True
+            )
+            aggressive_empty_cache(force_sync=True)
+        else:
+            per_tensor_param = None
+            peft_config = None
+
         log_gpu_memory_usage("Before resume weights", logger=logger)
 
         # 1. resume rollout memory (weights were released during sleep)
@@ -766,9 +784,10 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         log_gpu_memory_usage("After resume weights", logger=logger)
 
         # 2. determine if we need a base weight sync (adapter path only)
-        per_tensor_param, peft_config = self.actor.engine.get_per_tensor_param(
-            layered_summon=self.layered_summon, base_sync_done=True
-        )
+        if per_tensor_param is None:
+            per_tensor_param, peft_config = self.actor.engine.get_per_tensor_param(
+                layered_summon=self.layered_summon, base_sync_done=True
+            )
 
         do_lora_base_sync = False
         if not self.peft_merge and peft_config is not None:

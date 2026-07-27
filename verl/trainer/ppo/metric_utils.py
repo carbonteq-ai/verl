@@ -570,6 +570,7 @@ def compute_data_metrics(batch: DataProto, use_critic: bool = True) -> dict[str,
         "critic/returns/min": returns_min,
         **critic_value_metrics,
         # response length
+        "response_length/total": torch.sum(response_length).detach().item(),
         "response_length/mean": torch.mean(response_length).detach().item(),
         "response_length/max": torch.max(response_length).detach().item(),
         "response_length/min": torch.min(response_length).detach().item(),

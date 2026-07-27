@@ -545,6 +545,7 @@ class PPOTrainer(ABC):
             metrics.update(off_policy_metrics)
             batch.extra_info["temperature"] = self.config.actor_rollout_ref.rollout.temperature
             self.on_sample_end()
+            metrics.update(self._consume_rollout_metrics())
 
         # 2. [OPTIONAL] compute reward score with colocated reward model
         if self.reward_loop_manager.reward_loop_worker_handles is None:
@@ -620,6 +621,11 @@ class PPOTrainer(ABC):
         changed ratio / wire payload), merged into this step's logged metrics."""
         metrics = getattr(self, "_pending_sync_metrics", None) or {}
         self._pending_sync_metrics = {}
+        return metrics
+
+    def _consume_rollout_metrics(self) -> dict:
+        metrics = getattr(self, "_pending_rollout_metrics", None) or {}
+        self._pending_rollout_metrics = {}
         return metrics
 
     def on_sample_begin(self):

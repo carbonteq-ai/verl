@@ -203,3 +203,35 @@ def test_prepare_model_outputs_can_be_sliced_back_to_response_shape_on_gpu():
     assert model_output["log_probs"].is_nested
     assert padded_log_probs.shape == (2, 2)
     torch.testing.assert_close(padded_log_probs, expected)
+
+
+def test_prepare_model_outputs_chunks_entropy_without_remove_padding_on_gpu():
+    from verl.utils import tensordict_utils as tu
+    from verl.utils import torch_functional as verl_F
+
+    device = "cuda"
+    FSDPEngineWithLMHead = _fsdp_engine_with_lm_head_cls()
+    engine = FSDPEngineWithLMHead.__new__(FSDPEngineWithLMHead)
+    engine.engine_config = SimpleNamespace(
+        entropy_checkpointing=False,
+        entropy_from_logits_with_chunking=True,
+        entropy_from_logits_chunk_size=2,
+    )
+    engine.compute_entropy_from_logits = verl_F.entropy_from_logits_with_chunking
+    micro_batch = _make_micro_batch(device)
+    tu.assign_non_tensor(micro_batch, calculate_entropy=True)
+    _, output_args = engine.prepare_model_inputs(micro_batch)
+
+    torch.manual_seed(0)
+    logits = torch.randn(2, 5, 32, device=device)
+    model_output = engine.prepare_model_outputs(
+        output=SimpleNamespace(logits=logits.clone()),
+        output_args=output_args,
+        micro_batch=micro_batch,
+        logits_processor_func=None,
+    )
+
+    expected = verl_F.entropy_from_logits(logits)
+    actual = torch.nested.to_padded_tensor(model_output["entropy"], padding=0, output_size=(2, 5))
+    expected[1, 3:] = 0
+    torch.testing.assert_close(actual, expected)

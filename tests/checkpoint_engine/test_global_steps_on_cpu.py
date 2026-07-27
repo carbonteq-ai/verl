@@ -14,6 +14,7 @@
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 from verl.checkpoint_engine.base import CheckpointEngineWorker
 from verl.workers.engine_workers import ActorRolloutRefWorker
@@ -96,3 +97,39 @@ def test_checkpoint_worker_passes_global_steps_to_receive_and_rollout_update():
     assert checkpoint_engine.received_global_steps == 17
     assert server_adapter.global_steps == 17
     assert [name for name, _tensor in server_adapter.weights] == ["w"]
+
+
+def test_lora_adapter_is_staged_before_rollout_weights_wake(monkeypatch):
+    events = []
+    engine = MagicMock()
+    engine.is_param_offload_enabled = False
+    engine.get_per_tensor_param.side_effect = lambda **_kwargs: (
+        events.append("stage_adapter") or [("lora", object())],
+        {"r": 8},
+    )
+    rollout = SimpleNamespace(
+        resume=AsyncMock(side_effect=lambda **kwargs: events.append(f"resume_{kwargs['tags'][0]}")),
+        update_weights=AsyncMock(side_effect=lambda *_args, **_kwargs: events.append("sync_adapter")),
+        sleep_level=2,
+    )
+    worker = ActorRolloutRefWorker.__new__(ActorRolloutRefWorker)
+    worker.config = SimpleNamespace(
+        rollout=SimpleNamespace(
+            checkpoint_engine=SimpleNamespace(backend="naive"),
+            free_cache_engine=True,
+        )
+    )
+    worker.actor = SimpleNamespace(engine=engine)
+    worker.rollout = rollout
+    worker.base_sync_done = True
+    worker.layered_summon = False
+    worker.peft_merge = False
+    worker.lora_as_adapter = True
+
+    monkeypatch.setattr("verl.workers.engine_workers.set_expandable_segments", lambda _enabled: None)
+    monkeypatch.setattr("verl.workers.engine_workers.aggressive_empty_cache", lambda **_kwargs: None)
+    monkeypatch.setattr("verl.workers.engine_workers.log_gpu_memory_usage", lambda *_args, **_kwargs: None)
+
+    asyncio.run(ActorRolloutRefWorker.update_weights.__wrapped__(worker, global_steps=1, mode="naive"))
+
+    assert events == ["stage_adapter", "resume_weights", "sync_adapter", "resume_kv_cache"]

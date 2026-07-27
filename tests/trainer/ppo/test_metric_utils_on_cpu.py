@@ -329,6 +329,7 @@ class TestComputeDataMetrics(unittest.TestCase):
         self.assertIn("critic/returns/mean", metrics)
         self.assertIn("critic/values/mean", metrics)
         self.assertIn("critic/vf_explained_var", metrics)
+        self.assertEqual(metrics["response_length/total"], 4.0)
         self.assertIn("response_length/mean", metrics)
         self.assertIn("prompt_length/mean", metrics)
 
@@ -347,6 +348,7 @@ class TestComputeDataMetrics(unittest.TestCase):
         # Check that other metrics are still present
         self.assertIn("critic/score/mean", metrics)
         self.assertIn("critic/rewards/mean", metrics)
+        self.assertEqual(metrics["response_length/total"], 4.0)
         self.assertIn("response_length/mean", metrics)
 
 
