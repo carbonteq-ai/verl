@@ -2,18 +2,19 @@
 
 ## Status
 
-**Published SAMPO candidate with an unpublished runtime-delta candidate.** The
+**Published SAMPO candidate with a published runtime-delta candidate.** The
 maintained CarbonTeq fork and SAMPO branch are published. The runtime
 compatibility, LoRA/FSDP/Qwen, and telemetry changes described below are
-reconstructed as an uncommitted candidate on `origin/main`; they are not yet an
-immutable fork release.
+reconstructed and published on branch `codex/runtime-release-qwen35`; they are
+still blocked from runtime release until the separate dependency-only lock,
+image smoke, and bounded workload gates pass.
 
 Upstream repository: `https://github.com/verl-project/verl.git`
 
 Upstream base for the published SAMPO line:
 `a35908ca3c9632859c58d6a2855d858918ae21dc`
 
-Reconstruction base for the unpublished runtime delta:
+Reconstruction base for the published runtime delta:
 `553280b88afe4e7fbc4aefeff27bbf0a22e7c048`
 
 Expected remotes:
@@ -60,7 +61,7 @@ hierarchical equations to token-aligned turn spans.
 
 ### Runtime dependency compatibility
 
-The unpublished candidate adds `orjson`, permits supported Transformers
+The published runtime-delta candidate adds `orjson`, permits supported Transformers
 releases below 5.15 while excluding known-broken 5.6.0, and constrains the vLLM
 extra to `>=0.18.0,<0.26.0`. The framework's veRL runtime remains a separately
 locked Python environment; these ranges define the fork's compatible resolver
