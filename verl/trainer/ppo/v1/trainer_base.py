@@ -103,6 +103,12 @@ def apply_greedy_sampling_params(params: dict[str, Any]) -> None:
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "INFO"))
 
+SAMPO_ROLLOUT_METADATA_FIELDS = (
+    "sampo_turn_spans",
+    "sampo_anchor_state_keys",
+    "sampo_step_rewards",
+)
+
 
 def _tq_supports_checkpoint() -> bool:
     """Whether the installed TransferQueue can snapshot/restore its state for checkpoint consistency."""
@@ -1594,12 +1600,17 @@ class PPOTrainer(ABC):
     def _compute_advantage(self, batch: KVBatchMeta, metrics: dict) -> KVBatchMeta:
         """Compute the advantage of the batch."""
         fields = ["uid", "response_mask", "rm_scores", "rollout_log_probs", "old_log_probs", "ref_log_prob", "values"]
+        if self.config.algorithm.adv_estimator in (core_algos.AdvantageEstimator.SAMPO, "sampo"):
+            fields.extend(SAMPO_ROLLOUT_METADATA_FIELDS)
         data = tq.kv_batch_get(keys=batch.keys, partition_id=batch.partition_id, select_fields=fields)
 
         response_mask = data["response_mask"]
         data = DataProto(batch=data.to_padded_tensor())
         data.batch["token_level_scores"] = data.batch["rm_scores"]
         data.non_tensor_batch["uid"] = np.array(data.batch.pop("uid").tolist(), dtype=object)
+        for field in SAMPO_ROLLOUT_METADATA_FIELDS:
+            if field in data.batch:
+                data.non_tensor_batch[field] = np.array(data.batch.pop(field).tolist(), dtype=object)
 
         # 1. apply kl penalty to rewards
         if self.config.algorithm.use_kl_in_reward:

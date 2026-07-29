@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import numpy as np
+import torch
 from omegaconf import OmegaConf
+from tensordict import NonTensorData, NonTensorStack, TensorDict
+from transfer_queue import KVBatchMeta
 
 from verl.trainer.ppo.v1.replay_buffer import ReplayBuffer, ReplayBufferAsync
 from verl.trainer.ppo.v1.trainer_base import PPOTrainer
@@ -160,3 +164,66 @@ def test_builtin_filter_groups_forwards_total_generation_limit():
     sampler = trainer._build_replay_buffer()
 
     assert sampler.max_num_gen_batches == 10
+
+
+def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
+    trainer = _StubTrainer.__new__(_StubTrainer)
+    trainer.config = OmegaConf.create(
+        {
+            "algorithm": {
+                "adv_estimator": "sampo",
+                "gamma": 1.0,
+                "lam": 1.0,
+                "use_kl_in_reward": False,
+                "norm_adv_by_std_in_grpo": False,
+            },
+            "actor_rollout_ref": {"rollout": {"n": 2}},
+        }
+    )
+    batch = KVBatchMeta(partition_id="train", keys=["a", "b"], tags=[{}, {}])
+    response_mask = torch.nested.as_nested_tensor(
+        [torch.ones(2, dtype=torch.int64), torch.ones(2, dtype=torch.int64)],
+        layout=torch.jagged,
+    )
+    rm_scores = torch.nested.as_nested_tensor(
+        [torch.tensor([0.0, 1.0]), torch.tensor([0.0, 2.0])],
+        layout=torch.jagged,
+    )
+    transfer_data = TensorDict(
+        {
+            "uid": NonTensorStack.from_list([NonTensorData("group"), NonTensorData("group")]),
+            "response_mask": response_mask,
+            "rm_scores": rm_scores,
+            "sampo_turn_spans": NonTensorStack.from_list([NonTensorData([[0, 2]]), NonTensorData([[0, 2]])]),
+            "sampo_anchor_state_keys": NonTensorStack.from_list([NonTensorData(["anchor"]), NonTensorData(["anchor"])]),
+            "sampo_step_rewards": NonTensorStack.from_list([NonTensorData([1.0]), NonTensorData([2.0])]),
+        },
+        batch_size=[2],
+    )
+    computed = MagicMock()
+    computed.batch = {
+        "advantages": torch.ones(2, 2),
+        "returns": torch.ones(2, 2),
+    }
+
+    with (
+        patch("verl.trainer.ppo.v1.trainer_base.tq.kv_batch_get", return_value=transfer_data) as get,
+        patch("verl.trainer.ppo.v1.trainer_base.tq.kv_batch_put", return_value=batch),
+        patch(
+            "verl.trainer.ppo.v1.trainer_base.compute_advantage_for_multi_trajectories",
+            return_value=computed,
+        ) as compute,
+    ):
+        trainer._compute_advantage(batch, metrics={})
+
+    selected_fields = get.call_args.kwargs["select_fields"]
+    assert selected_fields[-3:] == [
+        "sampo_turn_spans",
+        "sampo_anchor_state_keys",
+        "sampo_step_rewards",
+    ]
+    forwarded = compute.call_args.args[0].non_tensor_batch
+    assert forwarded["sampo_turn_spans"].tolist() == [[[0, 2]], [[0, 2]]]
+    assert forwarded["sampo_anchor_state_keys"].tolist() == [["anchor"], ["anchor"]]
+    assert forwarded["sampo_step_rewards"].tolist() == [[1.0], [2.0]]
+    assert all(value.dtype == np.dtype("O") for value in forwarded.values())

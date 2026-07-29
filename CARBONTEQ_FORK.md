@@ -80,6 +80,23 @@ CPU regression coverage:
 and
 `tests/trainer/ppo/v1/test_trainer_base_on_cpu.py::test_builtin_filter_groups_forwards_total_generation_limit`.
 
+### Preserve SAMPO rollout metadata in the V1 advantage path
+
+The V1 trainer previously fetched only reward, mask, and log-probability fields
+from TransferQueue before advantage computation. Agent-loop rollouts therefore
+stored the three SAMPO metadata arrays successfully, but the driver omitted
+them from the reconstructed `DataProto` and rejected every SAMPO optimizer
+batch as incomplete.
+
+The CarbonTeq delta requests `sampo_turn_spans`,
+`sampo_anchor_state_keys`, and `sampo_step_rewards` for SAMPO batches and moves
+their per-row non-tensor values into `DataProto.non_tensor_batch` before
+calling the shared advantage router. Other advantage estimators retain their
+existing TransferQueue field selection.
+
+CPU regression coverage:
+`tests/trainer/ppo/v1/test_trainer_base_on_cpu.py::test_sampo_advantage_fetches_and_forwards_rollout_metadata`.
+
 ### Runtime dependency compatibility
 
 The published runtime-delta candidate adds `orjson`, permits supported Transformers
@@ -201,6 +218,7 @@ pytest -q \
   tests/checkpoint_engine/test_global_steps_on_cpu.py \
   tests/models/test_qwen35_decoder_layer_forward_on_cpu.py \
   tests/trainer/ppo/test_metric_utils_on_cpu.py \
+  tests/trainer/ppo/test_sampo_advantage_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
 git diff --check
 ```
