@@ -21,7 +21,7 @@ from tensordict import NonTensorData, NonTensorStack, TensorDict
 from transfer_queue import KVBatchMeta
 
 from verl.trainer.ppo.v1.replay_buffer import ReplayBuffer, ReplayBufferAsync
-from verl.trainer.ppo.v1.trainer_base import PPOTrainer
+from verl.trainer.ppo.v1.trainer_base import PPOTrainer, _sampo_spans_from_lengths
 
 
 class _StubTrainer(PPOTrainer):
@@ -205,6 +205,7 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
                     NonTensorData(
                         {
                             "sampo_prompt_group_id": "dataset-row-0",
+                            "sampo_turn_lengths": [2],
                             "sampo_turn_spans": [[0, 2]],
                             "sampo_anchor_state_keys": ["anchor"],
                             "sampo_step_rewards": [1.0],
@@ -213,6 +214,7 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
                     NonTensorData(
                         {
                             "sampo_prompt_group_id": "dataset-row-0",
+                            "sampo_turn_lengths": [2],
                             "sampo_turn_spans": [[0, 2]],
                             "sampo_anchor_state_keys": ["anchor"],
                             "sampo_step_rewards": [2.0],
@@ -244,7 +246,14 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
     forwarded = compute.call_args.args[0].non_tensor_batch
     assert forwarded["uid"].tolist() == ["dataset-row-0", "dataset-row-0"]
     assert "sampo_prompt_group_id" not in forwarded
+    assert "sampo_turn_lengths" not in forwarded
     assert forwarded["sampo_turn_spans"].tolist() == [[[0, 2]], [[0, 2]]]
     assert forwarded["sampo_anchor_state_keys"].tolist() == [["anchor"], ["anchor"]]
     assert forwarded["sampo_step_rewards"].tolist() == [[1.0], [2.0]]
     assert all(value.dtype == np.dtype("O") for value in forwarded.values())
+
+
+def test_sampo_turn_lengths_align_to_materialized_response_mask():
+    mask = torch.tensor([1, 1, 0, 1, 1, 1], dtype=torch.int64)
+
+    assert _sampo_spans_from_lengths([2, 3], mask) == [[0, 2], [3, 6]]

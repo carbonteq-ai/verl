@@ -105,10 +105,36 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "INFO"))
 
 SAMPO_ROLLOUT_METADATA_FIELDS = (
     "sampo_prompt_group_id",
+    "sampo_turn_lengths",
     "sampo_turn_spans",
     "sampo_anchor_state_keys",
     "sampo_step_rewards",
 )
+
+
+def _sampo_spans_from_lengths(lengths: Any, response_mask: torch.Tensor) -> list[list[int]]:
+    """Align stable per-turn policy-token lengths to the materialized response mask."""
+    try:
+        turn_lengths = [int(value) for value in lengths]
+    except (TypeError, ValueError) as error:
+        raise ValueError("SAMPO turn lengths are malformed") from error
+    if not turn_lengths or any(length <= 0 for length in turn_lengths):
+        raise ValueError("SAMPO turn lengths must be positive")
+    sampled = torch.nonzero(response_mask > 0, as_tuple=False).flatten().tolist()
+    if sum(turn_lengths) != len(sampled):
+        raise ValueError(
+            "SAMPO turn lengths must cover every sampled policy token; "
+            f"declared={sum(turn_lengths)}, observed={len(sampled)}"
+        )
+    spans: list[list[int]] = []
+    cursor = 0
+    for length in turn_lengths:
+        positions = sampled[cursor : cursor + length]
+        if positions != list(range(positions[0], positions[-1] + 1)):
+            raise ValueError("each SAMPO turn must be one contiguous sampled-policy span")
+        spans.append([positions[0], positions[-1] + 1])
+        cursor += length
+    return spans
 
 
 def _tq_supports_checkpoint() -> bool:
@@ -1623,6 +1649,15 @@ class PPOTrainer(ABC):
                     data.non_tensor_batch[field] = value_array
         if "sampo_prompt_group_id" in data.non_tensor_batch:
             materialized_uids = data.non_tensor_batch.pop("sampo_prompt_group_id").tolist()
+        if "sampo_turn_lengths" in data.non_tensor_batch:
+            turn_lengths = data.non_tensor_batch.pop("sampo_turn_lengths").tolist()
+            spans = [
+                _sampo_spans_from_lengths(lengths, mask)
+                for lengths, mask in zip(turn_lengths, data.batch["response_mask"], strict=True)
+            ]
+            span_array = np.empty(len(spans), dtype=object)
+            span_array[:] = spans
+            data.non_tensor_batch["sampo_turn_spans"] = span_array
         data.non_tensor_batch["uid"] = np.array(materialized_uids, dtype=object)
 
         # 1. apply kl penalty to rewards
