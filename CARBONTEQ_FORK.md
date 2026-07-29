@@ -2,12 +2,12 @@
 
 ## Status
 
-**Published SAMPO candidate with an active release-delta candidate.** The
+**Published SAMPO candidate with a published release delta.** The
 maintained CarbonTeq fork and earlier SAMPO branch are published. The current
 SAMPO telemetry, local Python 3.13, and immutable vLLM-selection changes are
-maintained on `codex/sampo-v1-metadata`; they remain candidates until this
-ledger and implementation are committed, pushed, selected by the framework's
-dependency-only lock, and exercised by the bounded GPU gates.
+published on `codex/sampo-v1-metadata`. They remain blocked from production
+release until selected by the framework's dependency-only lock and exercised
+by the bounded GPU gates.
 
 Upstream repository: `https://github.com/verl-project/verl.git`
 
@@ -24,6 +24,9 @@ Expected remotes:
 
 Published SAMPO implementation commit:
 `8a718e5be7a107587f63967336ece333a5c160e1`.
+
+Published SAMPO evidence, Python 3.13, and vLLM-selection commit:
+`b42495dfe138dcc114c39b486a2c58c0e1ff6f29`.
 
 ## Maintained delta
 
