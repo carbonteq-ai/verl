@@ -88,11 +88,11 @@ stored the three SAMPO metadata arrays successfully, but the driver omitted
 them from the reconstructed `DataProto` and rejected every SAMPO optimizer
 batch as incomplete.
 
-The CarbonTeq delta requests `sampo_turn_spans`,
-`sampo_anchor_state_keys`, and `sampo_step_rewards` for SAMPO batches and moves
-their per-row non-tensor values into `DataProto.non_tensor_batch` before
-calling the shared advantage router. Other advantage estimators retain their
-existing TransferQueue field selection.
+The CarbonTeq delta requests the agent loop's `extra_fields` object for SAMPO
+batches and extracts `sampo_turn_spans`, `sampo_anchor_state_keys`, and
+`sampo_step_rewards` into `DataProto.non_tensor_batch` before calling the
+shared advantage router. Other advantage estimators retain their existing
+TransferQueue field selection.
 
 CPU regression coverage:
 `tests/trainer/ppo/v1/test_trainer_base_on_cpu.py::test_sampo_advantage_fetches_and_forwards_rollout_metadata`.

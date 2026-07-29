@@ -1601,16 +1601,21 @@ class PPOTrainer(ABC):
         """Compute the advantage of the batch."""
         fields = ["uid", "response_mask", "rm_scores", "rollout_log_probs", "old_log_probs", "ref_log_prob", "values"]
         if self.config.algorithm.adv_estimator in (core_algos.AdvantageEstimator.SAMPO, "sampo"):
-            fields.extend(SAMPO_ROLLOUT_METADATA_FIELDS)
+            fields.append("extra_fields")
         data = tq.kv_batch_get(keys=batch.keys, partition_id=batch.partition_id, select_fields=fields)
 
         response_mask = data["response_mask"]
         data = DataProto(batch=data.to_padded_tensor())
         data.batch["token_level_scores"] = data.batch["rm_scores"]
         data.non_tensor_batch["uid"] = np.array(data.batch.pop("uid").tolist(), dtype=object)
-        for field in SAMPO_ROLLOUT_METADATA_FIELDS:
-            if field in data.batch:
-                data.non_tensor_batch[field] = np.array(data.batch.pop(field).tolist(), dtype=object)
+        if "extra_fields" in data.batch:
+            extra_fields = data.batch.pop("extra_fields").tolist()
+            for field in SAMPO_ROLLOUT_METADATA_FIELDS:
+                values = [item[field] for item in extra_fields if isinstance(item, dict) and field in item]
+                if len(values) == len(extra_fields):
+                    value_array = np.empty(len(values), dtype=object)
+                    value_array[:] = values
+                    data.non_tensor_batch[field] = value_array
 
         # 1. apply kl penalty to rewards
         if self.config.algorithm.use_kl_in_reward:

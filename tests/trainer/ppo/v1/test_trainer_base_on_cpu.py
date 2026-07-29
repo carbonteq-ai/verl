@@ -194,9 +194,24 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
             "uid": NonTensorStack.from_list([NonTensorData("group"), NonTensorData("group")]),
             "response_mask": response_mask,
             "rm_scores": rm_scores,
-            "sampo_turn_spans": NonTensorStack.from_list([NonTensorData([[0, 2]]), NonTensorData([[0, 2]])]),
-            "sampo_anchor_state_keys": NonTensorStack.from_list([NonTensorData(["anchor"]), NonTensorData(["anchor"])]),
-            "sampo_step_rewards": NonTensorStack.from_list([NonTensorData([1.0]), NonTensorData([2.0])]),
+            "extra_fields": NonTensorStack.from_list(
+                [
+                    NonTensorData(
+                        {
+                            "sampo_turn_spans": [[0, 2]],
+                            "sampo_anchor_state_keys": ["anchor"],
+                            "sampo_step_rewards": [1.0],
+                        }
+                    ),
+                    NonTensorData(
+                        {
+                            "sampo_turn_spans": [[0, 2]],
+                            "sampo_anchor_state_keys": ["anchor"],
+                            "sampo_step_rewards": [2.0],
+                        }
+                    ),
+                ]
+            ),
         },
         batch_size=[2],
     )
@@ -217,11 +232,7 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
         trainer._compute_advantage(batch, metrics={})
 
     selected_fields = get.call_args.kwargs["select_fields"]
-    assert selected_fields[-3:] == [
-        "sampo_turn_spans",
-        "sampo_anchor_state_keys",
-        "sampo_step_rewards",
-    ]
+    assert selected_fields[-1] == "extra_fields"
     forwarded = compute.call_args.args[0].non_tensor_batch
     assert forwarded["sampo_turn_spans"].tolist() == [[[0, 2]], [[0, 2]]]
     assert forwarded["sampo_anchor_state_keys"].tolist() == [["anchor"], ["anchor"]]
