@@ -180,7 +180,7 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
             "actor_rollout_ref": {"rollout": {"n": 2}},
         }
     )
-    batch = KVBatchMeta(partition_id="train", keys=["a", "b"], tags=[{}, {}])
+    batch = KVBatchMeta(partition_id="train", keys=["group_0_0", "group_1_0"], tags=[{}, {}])
     response_mask = torch.nested.as_nested_tensor(
         [torch.ones(2, dtype=torch.int64), torch.ones(2, dtype=torch.int64)],
         layout=torch.jagged,
@@ -191,7 +191,9 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
     )
     transfer_data = TensorDict(
         {
-            "uid": NonTensorStack.from_list([NonTensorData("group"), NonTensorData("group")]),
+            # The replay-buffer key, not a potentially trajectory-local stored uid,
+            # owns SAMPO prompt-group identity.
+            "uid": NonTensorStack.from_list([NonTensorData("trajectory-a"), NonTensorData("trajectory-b")]),
             "response_mask": response_mask,
             "rm_scores": rm_scores,
             "extra_fields": NonTensorStack.from_list(
@@ -234,6 +236,7 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
     selected_fields = get.call_args.kwargs["select_fields"]
     assert selected_fields[-1] == "extra_fields"
     forwarded = compute.call_args.args[0].non_tensor_batch
+    assert forwarded["uid"].tolist() == ["group", "group"]
     assert forwarded["sampo_turn_spans"].tolist() == [[[0, 2]], [[0, 2]]]
     assert forwarded["sampo_anchor_state_keys"].tolist() == [["anchor"], ["anchor"]]
     assert forwarded["sampo_step_rewards"].tolist() == [[1.0], [2.0]]

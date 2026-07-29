@@ -1607,7 +1607,14 @@ class PPOTrainer(ABC):
         response_mask = data["response_mask"]
         data = DataProto(batch=data.to_padded_tensor())
         data.batch["token_level_scores"] = data.batch["rm_scores"]
-        data.non_tensor_batch["uid"] = np.array(data.batch.pop("uid").tolist(), dtype=object)
+        materialized_uids = data.batch.pop("uid").tolist()
+        if self.config.algorithm.adv_estimator in (core_algos.AdvantageEstimator.SAMPO, "sampo"):
+            # TransferQueue's key is the replay buffer's authoritative group identity:
+            # {prompt_uid}_{session_id}_{output_index}.  Do not trust a materialized
+            # trajectory uid for group-relative SAMPO advantages because rollout
+            # adapters may populate it with a per-trajectory identity.
+            materialized_uids = [key.rsplit("_", 2)[0] for key in batch.keys]
+        data.non_tensor_batch["uid"] = np.array(materialized_uids, dtype=object)
         if "extra_fields" in data.batch:
             extra_fields = data.batch.pop("extra_fields").tolist()
             for field in SAMPO_ROLLOUT_METADATA_FIELDS:

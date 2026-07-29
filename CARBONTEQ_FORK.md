@@ -97,6 +97,23 @@ TransferQueue field selection.
 CPU regression coverage:
 `tests/trainer/ppo/v1/test_trainer_base_on_cpu.py::test_sampo_advantage_fetches_and_forwards_rollout_metadata`.
 
+### Preserve SAMPO prompt-group identity
+
+SAMPO requires every optimizer batch to contain exactly `rollout.n`
+trajectories for each prompt. TransferQueue's replay-buffer key is the
+authoritative `{prompt_uid}_{session_id}_{output_index}` identity, while the
+materialized `uid` field may be populated by an adapter with a trajectory-local
+identity.
+
+For SAMPO only, the V1 advantage path now derives the prompt identity from the
+authoritative batch key before computing group-relative advantages. Other
+advantage estimators retain their existing materialized `uid` behavior.
+
+CPU regression coverage is included in
+`tests/trainer/ppo/v1/test_trainer_base_on_cpu.py::test_sampo_advantage_fetches_and_forwards_rollout_metadata`,
+which supplies distinct materialized trajectory identifiers for two members of
+one replay-buffer prompt group.
+
 ### Runtime dependency compatibility
 
 The published runtime-delta candidate adds `orjson`, permits supported Transformers
