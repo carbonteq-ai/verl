@@ -404,9 +404,13 @@ def compute_sampo_outcome_advantage(
         prompt_groups: dict[object, list[int]] = defaultdict(list)
         for row, prompt_id in enumerate(index):
             prompt_groups[prompt_id].append(row)
+        group_sizes = sorted(len(rows) for rows in prompt_groups.values())
         for rows in prompt_groups.values():
             if len(rows) != num_repeat:
-                raise ValueError("SAMPO requires complete prompt groups matching rollout.n")
+                raise ValueError(
+                    "SAMPO requires complete prompt groups matching rollout.n; "
+                    f"expected={num_repeat}, observed_group_sizes={group_sizes}"
+                )
             values = episode_rewards[rows]
             episode_advantages[rows] = _sampo_normalize(values, normalization)
 

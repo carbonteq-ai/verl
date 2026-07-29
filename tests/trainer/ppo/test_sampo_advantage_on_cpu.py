@@ -135,7 +135,10 @@ def test_sampo_rejects_invalid_turn_metadata(spans, anchors, step_rewards, messa
 
 
 def test_sampo_rejects_incomplete_prompt_groups() -> None:
-    with pytest.raises(ValueError, match="complete prompt groups"):
+    with pytest.raises(
+        ValueError,
+        match=r"complete prompt groups matching rollout.n; expected=2, observed_group_sizes=\[1\]",
+    ):
         compute_sampo_outcome_advantage(
             token_level_rewards=torch.tensor([[0.0, 1.0]]),
             response_mask=torch.ones((1, 2)),
