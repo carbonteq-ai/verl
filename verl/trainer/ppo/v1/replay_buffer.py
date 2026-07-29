@@ -125,6 +125,8 @@ class ReplayBuffer:
         train_batch_size (int, optional): Prompt count represented by one Sync DAPO in-flight batch.
         gen_batch_size (int, optional): Dataloader fetch granularity for refill dispatches.
         max_inflight_gen_batches (int): Maximum Sync DAPO prompt batches concurrently pending or running.
+        max_num_gen_batches (int): Maximum complete candidate batches generated for one Sync DAPO
+            optimizer batch. Non-positive values leave the replacement budget unbounded.
         sync_refill_failed_groups (bool): Whether sync sampling replaces failed groups with no trajectories.
     """
 
@@ -141,6 +143,7 @@ class ReplayBuffer:
         train_batch_size: int | None = None,
         gen_batch_size: int | None = None,
         max_inflight_gen_batches: int = 1,
+        max_num_gen_batches: int = 0,
         sync_refill_failed_groups: bool = False,
     ):
         self.trainer_mode = trainer_mode
@@ -154,6 +157,7 @@ class ReplayBuffer:
         self.train_batch_size = train_batch_size
         self.gen_batch_size = gen_batch_size
         self.max_inflight_gen_batches = max_inflight_gen_batches
+        self.max_num_gen_batches = max_num_gen_batches
         self.sync_refill_failed_groups = sync_refill_failed_groups
 
         assert isinstance(self.max_off_policy_threshold, int) and self.max_off_policy_threshold > 0, (
@@ -182,6 +186,8 @@ class ReplayBuffer:
         if self.filter_groups_metric is not None:
             if not isinstance(self.max_inflight_gen_batches, int) or self.max_inflight_gen_batches <= 0:
                 raise ValueError("max_inflight_gen_batches must be a positive integer")
+            if not isinstance(self.max_num_gen_batches, int):
+                raise ValueError("max_num_gen_batches must be an integer")
         if self.sync_refill_failed_groups and self.gen_batch_size != 1:
             raise ValueError("sync_refill_failed_groups requires gen_batch_size=1")
 
@@ -426,12 +432,18 @@ class ReplayBuffer:
         refill_credit = 0
         draining = False
         max_inflight_prompts = 0
+        candidate_prompts_generated = None
+        max_candidate_prompts = 0
         if dapo_enabled:
             max_inflight_prompts = self.max_inflight_gen_batches * self.train_batch_size
+            if self.max_num_gen_batches > 0:
+                max_candidate_prompts = self.max_num_gen_batches * self.train_batch_size
 
         while True:
             # Eviction, gating, and selection below must all use this snapshot.
             self._sync_metadata_from_transfer_queue()
+            if dapo_enabled and candidate_prompts_generated is None:
+                candidate_prompts_generated = len(self.prompt_global_steps[partition_id])
 
             eviction_reasons = self._terminal_eviction_reasons(global_steps, partition_id)
             failed_count = len(eviction_reasons[2])
@@ -460,13 +472,33 @@ class ReplayBuffer:
                 if not draining and refill_credit > 0:
                     available_slots = max(0, max_inflight_prompts - inflight_count)
                     dispatch_count = min(refill_credit, available_slots)
+                    if max_candidate_prompts > 0:
+                        assert candidate_prompts_generated is not None
+                        dispatch_count = min(
+                            dispatch_count,
+                            max(0, max_candidate_prompts - candidate_prompts_generated),
+                        )
                     assert self.gen_batch_size is not None
                     dispatch_count -= dispatch_count % self.gen_batch_size
                     if dispatch_count > 0:
                         assert self.refill_fn is not None
                         self.refill_fn(dispatch_count)
+                        assert candidate_prompts_generated is not None
+                        candidate_prompts_generated += dispatch_count
                         refill_credit -= dispatch_count
                         continue
+
+                if (
+                    not has_enough_samples
+                    and inflight_count == 0
+                    and max_candidate_prompts > 0
+                    and candidate_prompts_generated >= max_candidate_prompts
+                ):
+                    raise ValueError(
+                        f"algorithm.filter_groups exhausted max_num_gen_batches={self.max_num_gen_batches} "
+                        f"after generating {candidate_prompts_generated} candidate prompts; "
+                        f"only {len(sampleable_keys)} of {batch_size} required prompt groups had reward variance"
+                    )
 
             can_select = has_enough_samples and (not dapo_enabled or inflight_count == 0)
             if can_select:

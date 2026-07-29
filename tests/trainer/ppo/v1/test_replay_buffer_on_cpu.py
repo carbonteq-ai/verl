@@ -59,6 +59,7 @@ def _make_rb(
     train_batch_size: int = 2,
     gen_batch_size: int = 1,
     max_inflight_gen_batches: int = 1,
+    max_num_gen_batches: int = 0,
     sync_refill_failed_groups: bool = False,
 ) -> ReplayBuffer:
     """Construct a ReplayBuffer with defaults that keep generic samples on-policy."""
@@ -75,6 +76,7 @@ def _make_rb(
         train_batch_size=train_batch_size,
         gen_batch_size=gen_batch_size,
         max_inflight_gen_batches=max_inflight_gen_batches,
+        max_num_gen_batches=max_num_gen_batches,
         sync_refill_failed_groups=sync_refill_failed_groups,
     )
 
@@ -997,6 +999,29 @@ def test_sync_dapo_refills_twice_and_clears_surplus(tq_init, partition_id):
         assert surplus_uid not in remaining
         assert _trajectory_key(surplus_uid, 0) not in remaining
         assert _trajectory_key(surplus_uid, 1) not in remaining
+    finally:
+        _clear_partition(partition_id)
+
+
+def test_sync_dapo_stops_at_bounded_candidate_batch_limit(tq_init, partition_id):
+    no_signal = [PromptSpec(uid=_uid(), status="finished", sessions=2, rewards=[0.0, 0.0]) for _ in range(2)]
+    _produce(partition_id, no_signal).join_and_check()
+
+    refiller = FakeRefiller(partition_id, global_steps=1, sessions=2, rewards=[0.0, 1.0])
+    rb = _make_rb(
+        refill_fn=refiller,
+        filter_groups_metric="acc",
+        train_batch_size=2,
+        max_num_gen_batches=1,
+    )
+    try:
+        with pytest.raises(
+            ValueError,
+            match=r"exhausted max_num_gen_batches=1.*only 0 of 2 required",
+        ):
+            rb.sample(global_steps=1, partition_id=partition_id, batch_size=2)
+
+        assert refiller.calls == []
     finally:
         _clear_partition(partition_id)
 

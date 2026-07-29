@@ -175,8 +175,10 @@ class PPOTrainer(ABC):
             if sampler_cls is ReplayBuffer:
                 filter_groups = self.config.algorithm.get("filter_groups", None)
                 max_inflight_gen_batches = 1
+                max_num_gen_batches = 0
                 if filter_groups_metric is not None:
                     max_inflight_gen_batches = filter_groups.get("max_inflight_gen_batches", 1)
+                    max_num_gen_batches = filter_groups.get("max_num_gen_batches", 0)
                 train_batch_size = self.config.data.train_batch_size
                 replay_buffer_kwargs.update(
                     train_batch_size=train_batch_size,
@@ -184,6 +186,7 @@ class PPOTrainer(ABC):
                     if filter_groups_metric is not None or sync_refill_failed_groups
                     else (self.config.data.get("gen_batch_size", None) or train_batch_size),
                     max_inflight_gen_batches=max_inflight_gen_batches,
+                    max_num_gen_batches=max_num_gen_batches,
                 )
         return sampler_cls(**replay_buffer_kwargs)
 
@@ -205,13 +208,6 @@ class PPOTrainer(ABC):
             "reward.reward_model.enable_resource_pool=True. A colocated reward model computes rewards only "
             "after replay-buffer sampling."
         )
-        max_num_gen_batches = filter_groups.get("max_num_gen_batches", 0)
-        if max_num_gen_batches > 0:
-            logger.warning(
-                "algorithm.filter_groups.max_num_gen_batches=%s is ignored by the built-in V1 ReplayBuffer; "
-                "use max_inflight_gen_batches to bound concurrent Sync DAPO generation.",
-                max_num_gen_batches,
-            )
         return str(filter_metric)
 
     def init(self):

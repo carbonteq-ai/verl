@@ -59,6 +59,27 @@ to GiGPO hierarchical advantages plus the GSPO loss. This fork keeps one
 complete multi-turn trajectory in each batch row and applies the same
 hierarchical equations to token-aligned turn spans.
 
+### Bound dynamic group replacement in the core V1 trainer
+
+Upstream veRL's V1 replay buffer already filters reward-constant prompt groups
+and refills them with fresh rollouts, but it ignores
+`algorithm.filter_groups.max_num_gen_batches`. The CarbonTeq delta forwards
+that field into the synchronous replay buffer and treats it as a total
+candidate budget for one optimizer batch. Once the configured number of full
+candidate batches has been generated, the trainer fails with the observed
+sampleable-group count instead of retrying forever.
+
+This behavior adapts the bounded replacement semantics from the Apache-2.0
+`verl-project/verl-recipe` DAPO implementation at
+`230ee612279d552a4f34ecbfab931c213abd514d`. It is implemented directly in
+`verl.trainer.ppo.v1` rather than copying the recipe entrypoint or maintaining a
+second runtime checkout.
+
+CPU regression coverage:
+`tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py::test_sync_dapo_stops_at_bounded_candidate_batch_limit`
+and
+`tests/trainer/ppo/v1/test_trainer_base_on_cpu.py::test_builtin_filter_groups_forwards_total_generation_limit`.
+
 ### Runtime dependency compatibility
 
 The published runtime-delta candidate adds `orjson`, permits supported Transformers
@@ -131,8 +152,9 @@ CPU regression coverage:
   earlier turns before discounting.
 - The actor must select `policy_loss.loss_mode=gspo` with
   `loss_agg_mode=seq-mean-token-mean`.
-- Bounded reward-constant group replacement is supplied by the pinned
-  `verl-recipe` DAPO trainer; it is not implemented by the base trainer.
+- Bounded reward-constant group replacement runs through the core V1 trainer.
+  `algorithm.filter_groups.max_num_gen_batches` is the maximum number of full
+  candidate batches per optimizer batch; non-positive values remain unbounded.
 - The current qualified framework slice is limited to Qwen 3.5 and FSDP2.
 - The runtime candidate includes no TurboQuant bootstrap, compatibility shim,
   tests, package module registration, or vLLM server modification.
@@ -163,6 +185,7 @@ ruff check \
   verl/models/transformers/qwen3_5.py \
   verl/trainer/ppo/metric_utils.py \
   verl/trainer/ppo/v1/trainer_base.py \
+  verl/trainer/ppo/v1/replay_buffer.py \
   verl/trainer/ppo/v1/trainer_sync.py \
   verl/workers/engine/fsdp/transformer_impl.py \
   verl/workers/engine_workers.py \
@@ -171,6 +194,8 @@ ruff check \
   tests/models/test_fsdp_no_padding_on_gpu.py \
   tests/models/test_qwen35_decoder_layer_forward_on_cpu.py \
   tests/trainer/ppo/test_metric_utils_on_cpu.py \
+  tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py \
+  tests/trainer/ppo/v1/test_trainer_base_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
 pytest -q \
   tests/checkpoint_engine/test_global_steps_on_cpu.py \
