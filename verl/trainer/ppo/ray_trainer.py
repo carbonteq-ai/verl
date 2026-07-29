@@ -265,12 +265,14 @@ def compute_advantage(
             missing = [name for name in required if name not in data.non_tensor_batch]
             if missing:
                 raise ValueError(f"SAMPO rollout metadata is missing: {', '.join(missing)}")
+            sampo_metrics: dict[str, float] = {}
             adv_kwargs.update(
                 {
                     "turn_spans": data.non_tensor_batch["sampo_turn_spans"],
                     "anchor_state_keys": data.non_tensor_batch["sampo_anchor_state_keys"],
                     "step_rewards": data.non_tensor_batch["sampo_step_rewards"],
                     "num_repeat": num_repeat,
+                    "metrics": sampo_metrics,
                 }
             )
         if "reward_baselines" in data.batch:  # optional
@@ -297,6 +299,8 @@ def compute_advantage(
         advantages, returns = adv_estimator_fn(**adv_kwargs)
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
+        if adv_estimator in (AdvantageEstimator.SAMPO, "sampo"):
+            data.meta_info["sampo_metrics"] = sampo_metrics
     return data
 
 
@@ -1666,6 +1670,7 @@ class RayPPOTrainer:
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                             config=self.config.algorithm,
                         )
+                        metrics.update(batch.meta_info.get("sampo_metrics", {}))
                     # update critic
                     if self.use_critic:
                         with marked_timer("update_critic", timing_raw, color="pink"):

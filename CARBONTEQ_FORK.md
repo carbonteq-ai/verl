@@ -2,12 +2,12 @@
 
 ## Status
 
-**Published SAMPO candidate with a published runtime-delta candidate.** The
-maintained CarbonTeq fork and SAMPO branch are published. The runtime
-compatibility, LoRA/FSDP/Qwen, and telemetry changes described below are
-reconstructed and published on branch `codex/runtime-release-qwen35`; they are
-still blocked from runtime release until the separate dependency-only lock,
-image smoke, and bounded workload gates pass.
+**Published SAMPO candidate with an active release-delta candidate.** The
+maintained CarbonTeq fork and earlier SAMPO branch are published. The current
+SAMPO telemetry, local Python 3.13, and immutable vLLM-selection changes are
+maintained on `codex/sampo-v1-metadata`; they remain candidates until this
+ledger and implementation are committed, pushed, selected by the framework's
+dependency-only lock, and exercised by the bounded GPU gates.
 
 Upstream repository: `https://github.com/verl-project/verl.git`
 
@@ -116,11 +116,41 @@ one replay-buffer prompt group.
 
 ### Runtime dependency compatibility
 
-The published runtime-delta candidate adds `orjson`, permits supported Transformers
-releases below 5.15 while excluding known-broken 5.6.0, and constrains the vLLM
-extra to `>=0.18.0,<0.26.0`. The framework's veRL runtime remains a separately
-locked Python environment; these ranges define the fork's compatible resolver
-surface rather than replacing that immutable lock.
+The runtime delta adds `orjson`, permits supported Transformers releases below
+5.15 while excluding known-broken 5.6.0, and selects CarbonTeq vLLM commit
+`7817d845727af570352622dc8d58f2d43c76d89d` in the `vllm` extra. That vLLM
+commit is based on upstream 0.25.1 and carries the bounded TurboQuant
+cache-reshape correction documented in the vLLM fork's `CARBONTEQ_FORK.md`.
+
+The framework's veRL runtime remains a separately locked Python environment.
+Its release lock independently selects the same immutable vLLM commit; the
+fork extra prevents ad hoc veRL installations from silently resolving an
+unqualified upstream wheel.
+
+### Keep local Python 3.13 development reproducible
+
+`setup.py` declares the runtime dependencies imported by the core trainer,
+keeps the historical `prime` extra as a compatibility no-op, and replaces
+PRIME's removed `pyext` runtime with standard-library module compilation in
+`verl/utils/reward_score/prime_code/testing_util.py`. `pyproject.toml` records
+the supported Python range and mutually exclusive vLLM/SGLang resolver
+environments.
+
+Regression coverage:
+`tests/utils/reward_score/test_sandbox_on_cpu.py` and the focused SAMPO/V1
+trainer suites.
+
+### Report SAMPO hierarchical evidence
+
+The SAMPO estimator emits batch-level episode-advantage, turn-advantage,
+anchor-group-size, and sparse-reward-projection metrics from the same
+hierarchical tensors used by the optimizer. Both the legacy and V1 trainer
+paths retain those metrics through `DataProto.meta_info`, allowing the
+framework to normalize them without deriving optimizer evidence from traces.
+
+Regression coverage:
+`tests/trainer/ppo/test_sampo_advantage_on_cpu.py` and
+`tests/trainer/ppo/v1/test_trainer_base_on_cpu.py`.
 
 ### Stage LoRA adapters before waking colocated rollout weights
 
@@ -190,11 +220,11 @@ CPU regression coverage:
   `algorithm.filter_groups.max_num_gen_batches` is the maximum number of full
   candidate batches per optimizer batch; non-positive values remain unbounded.
 - The current qualified framework slice is limited to Qwen 3.5 and FSDP2.
-- The runtime candidate includes no TurboQuant bootstrap, compatibility shim,
-  tests, package module registration, or vLLM server modification.
+- veRL does not monkey-patch vLLM. TurboQuant cache reshaping is owned by the
+  separately maintained CarbonTeq vLLM fork and selected by immutable commit.
 - The repository contains no candidate-specific virtual environment,
   `runtime/` lock directory, or `sitecustomize` module. TurboQuant remains
-  unqualified research rather than a supported fork delta.
+  unqualified until the consuming framework's DAPO and SAMPO GPU gates pass.
 
 ## Validation
 
@@ -228,14 +258,19 @@ ruff check \
   tests/models/test_fsdp_no_padding_on_gpu.py \
   tests/models/test_qwen35_decoder_layer_forward_on_cpu.py \
   tests/trainer/ppo/test_metric_utils_on_cpu.py \
+  tests/trainer/ppo/test_sampo_advantage_on_cpu.py \
   tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py \
   tests/trainer/ppo/v1/test_trainer_base_on_cpu.py \
+  tests/utils/reward_score/test_sandbox_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
 pytest -q \
   tests/checkpoint_engine/test_global_steps_on_cpu.py \
   tests/models/test_qwen35_decoder_layer_forward_on_cpu.py \
   tests/trainer/ppo/test_metric_utils_on_cpu.py \
   tests/trainer/ppo/test_sampo_advantage_on_cpu.py \
+  tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py \
+  tests/trainer/ppo/v1/test_trainer_base_on_cpu.py \
+  tests/utils/reward_score/test_sandbox_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
 git diff --check
 ```
@@ -276,7 +311,8 @@ runtime patch only after its regression passes against upstream behavior.
 
 - Similarity-based fuzzy anchor grouping is intentionally unsupported; stable
   exact anchor keys are the reproducible contract.
-- TurboQuant and quantization-aware cache layouts are unsupported.
+- TurboQuant and quantization-aware cache layouts require the pinned CarbonTeq
+  vLLM fork and remain unsupported until their framework GPU gates pass.
 - QLoRA and quantization-aware actor loading are not part of the new runtime
   delta.
 - A GPU quality or convergence claim is deferred until the applicable release

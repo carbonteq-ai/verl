@@ -370,6 +370,7 @@ def compute_sampo_outcome_advantage(
     step_rewards: np.ndarray,
     num_repeat: int = 1,
     config: Optional[AlgoConfig] = None,
+    metrics: Optional[dict[str, float]] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute SAMPO episode- and anchor-state-relative token advantages.
 
@@ -417,6 +418,7 @@ def compute_sampo_outcome_advantage(
         parsed_spans: list[list[tuple[int, int]]] = []
         parsed_anchors: list[list[str]] = []
         discounted_returns: list[list[torch.Tensor]] = []
+        sparse_reward_rows = 0
         anchor_groups: dict[tuple[object, str], list[tuple[int, int, torch.Tensor]]] = defaultdict(list)
         for row in range(batch_size):
             spans = _validate_sampo_turn_metadata(
@@ -431,6 +433,7 @@ def compute_sampo_outcome_advantage(
             if all(value is None for value in rewards):
                 resolved = [episode_rewards.new_zeros(()) for _ in rewards]
                 resolved[-1] = episode_rewards[row]
+                sparse_reward_rows += 1
             elif all(value is not None for value in rewards):
                 resolved = []
                 for value in rewards:
@@ -463,6 +466,21 @@ def compute_sampo_outcome_advantage(
             for turn_index, (start, end) in enumerate(spans):
                 advantages[row, start:end] = episode_advantages[row] + step_weight * turn_advantages[row][turn_index]
         advantages *= response_mask
+        if metrics is not None:
+            flat_turn_advantages = [value for values in turn_advantages for value in values]
+            anchor_members = sum(len(members) for members in anchor_groups.values())
+            metrics.update(
+                {
+                    "sampo/episode_advantage_mean": float(episode_advantages.mean().item()),
+                    "sampo/turn_advantage_mean": float(
+                        torch.stack(flat_turn_advantages).mean().item()
+                    ),
+                    "sampo/anchor_group_size_mean": float(
+                        sum(len(members) ** 2 for members in anchor_groups.values()) / anchor_members
+                    ),
+                    "sampo/sparse_reward_projection_fraction": sparse_reward_rows / batch_size,
+                }
+            )
     return advantages, advantages
 
 

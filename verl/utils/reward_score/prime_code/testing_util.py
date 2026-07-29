@@ -28,12 +28,21 @@ from enum import Enum
 
 # for capturing the stdout
 from io import StringIO
+from types import ModuleType
 
 # used for testing the code that reads from input
 from unittest.mock import mock_open, patch
 
 import numpy as np
-from pyext import RuntimeModule
+
+
+def _runtime_module_from_string(name: str, path: str, source: str) -> ModuleType:
+    """Compile source into an isolated module without the unmaintained pyext package."""
+
+    module = ModuleType(name)
+    module.__file__ = path or f"<{name}>"
+    exec(compile(source, module.__file__, "exec"), module.__dict__)
+    return module
 
 
 def truncatefn(s, length=300):
@@ -121,7 +130,7 @@ def run_test(in_outs, test=None, debug=False, timeout=15):
                 print(f"sol = {sol}")
             signal.alarm(timeout)
             try:
-                tmp_sol = RuntimeModule.from_string("tmp_sol", "", sol)
+                tmp_sol = _runtime_module_from_string("tmp_sol", "", sol)
                 tmp = tmp_sol if "class Solution" not in test else tmp_sol.Solution()
                 signal.alarm(0)
             except Exception as e:
@@ -181,7 +190,7 @@ def run_test(in_outs, test=None, debug=False, timeout=15):
             method_name = "code"
             signal.alarm(timeout)
             try:
-                tmp_sol = RuntimeModule.from_string("tmp_sol", "", sol)
+                tmp_sol = _runtime_module_from_string("tmp_sol", "", sol)
                 tmp = tmp_sol
                 signal.alarm(0)
             except Exception as e:

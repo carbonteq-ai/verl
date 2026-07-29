@@ -32,6 +32,7 @@ def _config(*, normalization: str = "mean"):
 def test_sampo_combines_episode_and_anchor_relative_turn_advantages() -> None:
     rewards = torch.tensor([[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 3.0]])
     mask = torch.ones_like(rewards)
+    metrics = {}
     advantages, returns = compute_sampo_outcome_advantage(
         token_level_rewards=rewards,
         response_mask=mask,
@@ -41,11 +42,20 @@ def test_sampo_combines_episode_and_anchor_relative_turn_advantages() -> None:
         step_rewards=np.array([[None, None], [None, None]], dtype=object),
         num_repeat=2,
         config=_config(),
+        metrics=metrics,
     )
 
     expected = torch.tensor([[-1.5, -1.5, -2.0, -2.0], [1.5, 1.5, 2.0, 2.0]])
     torch.testing.assert_close(advantages, expected)
     torch.testing.assert_close(returns, expected)
+    assert metrics == pytest.approx(
+        {
+            "sampo/episode_advantage_mean": 0.0,
+            "sampo/turn_advantage_mean": 0.0,
+            "sampo/anchor_group_size_mean": 2.0,
+            "sampo/sparse_reward_projection_fraction": 1.0,
+        }
+    )
 
 
 def test_sampo_uses_explicit_step_rewards_and_masks_non_policy_tokens() -> None:
@@ -90,6 +100,14 @@ def test_compute_advantage_routes_agent_loop_metadata_to_sampo() -> None:
     torch.testing.assert_close(
         result.batch["advantages"],
         torch.tensor([[-2.0, -2.0], [2.0, 2.0]]),
+    )
+    assert result.meta_info["sampo_metrics"] == pytest.approx(
+        {
+            "sampo/episode_advantage_mean": 0.0,
+            "sampo/turn_advantage_mean": 0.0,
+            "sampo/anchor_group_size_mean": 2.0,
+            "sampo/sparse_reward_projection_fraction": 1.0,
+        }
     )
 
 

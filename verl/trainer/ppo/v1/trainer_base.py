@@ -1703,6 +1703,7 @@ class PPOTrainer(ABC):
             norm_adv_by_std_in_grpo=self.config.algorithm.get("norm_adv_by_std_in_grpo", True),
             config=self.config.algorithm,
         )
+        metrics.update(data.meta_info.get("sampo_metrics", {}))
 
         # 4. write nested advantages and returns back to TransferQueue
         fields = ["advantages", "returns"]
