@@ -182,7 +182,7 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
     )
     batch = KVBatchMeta(
         partition_id="train",
-        keys=["group_session-a_0_0", "group_session-b_1_0"],
+        keys=["opaque-a_0_0", "opaque-b_1_0"],
         tags=[{}, {}],
     )
     response_mask = torch.nested.as_nested_tensor(
@@ -204,6 +204,7 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
                 [
                     NonTensorData(
                         {
+                            "sampo_prompt_group_id": "dataset-row-0",
                             "sampo_turn_spans": [[0, 2]],
                             "sampo_anchor_state_keys": ["anchor"],
                             "sampo_step_rewards": [1.0],
@@ -211,6 +212,7 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
                     ),
                     NonTensorData(
                         {
+                            "sampo_prompt_group_id": "dataset-row-0",
                             "sampo_turn_spans": [[0, 2]],
                             "sampo_anchor_state_keys": ["anchor"],
                             "sampo_step_rewards": [2.0],
@@ -240,7 +242,8 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
     selected_fields = get.call_args.kwargs["select_fields"]
     assert selected_fields[-1] == "extra_fields"
     forwarded = compute.call_args.args[0].non_tensor_batch
-    assert forwarded["uid"].tolist() == ["group", "group"]
+    assert forwarded["uid"].tolist() == ["dataset-row-0", "dataset-row-0"]
+    assert "sampo_prompt_group_id" not in forwarded
     assert forwarded["sampo_turn_spans"].tolist() == [[[0, 2]], [[0, 2]]]
     assert forwarded["sampo_anchor_state_keys"].tolist() == [["anchor"], ["anchor"]]
     assert forwarded["sampo_step_rewards"].tolist() == [[1.0], [2.0]]

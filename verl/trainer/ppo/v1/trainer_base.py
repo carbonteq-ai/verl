@@ -104,6 +104,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "INFO"))
 
 SAMPO_ROLLOUT_METADATA_FIELDS = (
+    "sampo_prompt_group_id",
     "sampo_turn_spans",
     "sampo_anchor_state_keys",
     "sampo_step_rewards",
@@ -1609,12 +1610,9 @@ class PPOTrainer(ABC):
         data.batch["token_level_scores"] = data.batch["rm_scores"]
         materialized_uids = data.batch.pop("uid").tolist()
         if self.config.algorithm.adv_estimator in (core_algos.AdvantageEstimator.SAMPO, "sampo"):
-            # TransferQueue's key is the replay buffer's authoritative group identity:
-            # {prompt_uid}_{session_id}_{output_index}.  Do not trust a materialized
-            # trajectory uid for group-relative SAMPO advantages because rollout
-            # adapters may populate it with a per-trajectory identity.
+            # Preserve compatibility with native replay keys when an agent loop
+            # does not publish an explicit SAMPO prompt-group identity.
             materialized_uids = [key.split("_", 1)[0] for key in batch.keys]
-        data.non_tensor_batch["uid"] = np.array(materialized_uids, dtype=object)
         if "extra_fields" in data.batch:
             extra_fields = data.batch.pop("extra_fields").tolist()
             for field in SAMPO_ROLLOUT_METADATA_FIELDS:
@@ -1623,6 +1621,9 @@ class PPOTrainer(ABC):
                     value_array = np.empty(len(values), dtype=object)
                     value_array[:] = values
                     data.non_tensor_batch[field] = value_array
+        if "sampo_prompt_group_id" in data.non_tensor_batch:
+            materialized_uids = data.non_tensor_batch.pop("sampo_prompt_group_id").tolist()
+        data.non_tensor_batch["uid"] = np.array(materialized_uids, dtype=object)
 
         # 1. apply kl penalty to rewards
         if self.config.algorithm.use_kl_in_reward:
