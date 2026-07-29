@@ -361,6 +361,37 @@ def compute_forward_kl_topk(
     return distillation_losses, distillation_metrics
 
 
+def _teacher_log_probs_to_response(data: TensorDict) -> torch.Tensor:
+    """Return response-aligned teacher log probabilities in padded form.
+
+    Teacher prompt log probabilities are shifted left by one token and end in
+    a dummy row. The remove-padding path stores them as a jagged tensor, while
+    models such as Qwen3.5 retain the dense ``[batch, prompt + response, 1]``
+    representation. ``no_padding_2_padding`` only accepts the former.
+    """
+    teacher_log_probs = data["teacher_logprobs"]
+    if teacher_log_probs.is_nested:
+        return no_padding_2_padding(teacher_log_probs, data).squeeze(-1)
+
+    prompts = data["prompts"]
+    responses = data["responses"]
+    if prompts.is_nested or responses.is_nested:
+        raise ValueError("dense teacher log probabilities require dense prompt and response tensors")
+    prompt_width = prompts.shape[1]
+    response_width = responses.shape[1]
+    expected_sequence_width = prompt_width + response_width
+    if (
+        teacher_log_probs.ndim != 3
+        or teacher_log_probs.shape[1] != expected_sequence_width
+        or teacher_log_probs.shape[2] != 1
+    ):
+        raise ValueError(
+            "dense teacher log probabilities must have shape "
+            f"[batch, {expected_sequence_width}, 1], got {tuple(teacher_log_probs.shape)}"
+        )
+    return teacher_log_probs[:, prompt_width - 1 : prompt_width + response_width - 1, 0]
+
+
 @register_distillation_loss(
     DistillationLossSettings(names=["kl", "k1", "abs", "mse", "k2", "low_var_kl", "k3"], use_estimator=True)
 )  # type: ignore[arg-type]
@@ -381,7 +412,7 @@ def compute_distillation_loss_reverse_kl_estimator(
     - distillation_metrics: Dictionary of metrics.
     """
     student_log_probs = no_padding_2_padding(model_output["log_probs"], data)
-    teacher_log_probs = no_padding_2_padding(data["teacher_logprobs"], data).squeeze(-1)
+    teacher_log_probs = _teacher_log_probs_to_response(data)
     if data["response_mask"].is_nested:
         response_mask_bool = data["response_mask"].bool().to_padded_tensor(False)
     else:
