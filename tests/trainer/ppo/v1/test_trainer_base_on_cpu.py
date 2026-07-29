@@ -180,7 +180,11 @@ def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
             "actor_rollout_ref": {"rollout": {"n": 2}},
         }
     )
-    batch = KVBatchMeta(partition_id="train", keys=["group_0_0", "group_1_0"], tags=[{}, {}])
+    batch = KVBatchMeta(
+        partition_id="train",
+        keys=["group_session-a_0_0", "group_session-b_1_0"],
+        tags=[{}, {}],
+    )
     response_mask = torch.nested.as_nested_tensor(
         [torch.ones(2, dtype=torch.int64), torch.ones(2, dtype=torch.int64)],
         layout=torch.jagged,

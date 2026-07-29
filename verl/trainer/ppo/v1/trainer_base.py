@@ -1613,7 +1613,7 @@ class PPOTrainer(ABC):
             # {prompt_uid}_{session_id}_{output_index}.  Do not trust a materialized
             # trajectory uid for group-relative SAMPO advantages because rollout
             # adapters may populate it with a per-trajectory identity.
-            materialized_uids = [key.rsplit("_", 2)[0] for key in batch.keys]
+            materialized_uids = [key.split("_", 1)[0] for key in batch.keys]
         data.non_tensor_batch["uid"] = np.array(materialized_uids, dtype=object)
         if "extra_fields" in data.batch:
             extra_fields = data.batch.pop("extra_fields").tolist()
