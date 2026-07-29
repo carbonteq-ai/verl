@@ -61,6 +61,7 @@ def _make_rb(
     max_inflight_gen_batches: int = 1,
     max_num_gen_batches: int = 0,
     sync_refill_failed_groups: bool = False,
+    refill_all_failed_groups: bool = False,
 ) -> ReplayBuffer:
     """Construct a ReplayBuffer with defaults that keep generic samples on-policy."""
     replay_buffer_cls = ReplayBuffer if trainer_mode == "sync" else ReplayBufferAsync
@@ -78,6 +79,7 @@ def _make_rb(
         max_inflight_gen_batches=max_inflight_gen_batches,
         max_num_gen_batches=max_num_gen_batches,
         sync_refill_failed_groups=sync_refill_failed_groups,
+        refill_all_failed_groups=refill_all_failed_groups,
     )
 
 
@@ -820,6 +822,23 @@ def test_sync_failure_refill_keeps_materializable_failed_groups(tq_init, partiti
         assert _uids_of(batch.keys) == {finished.uid, failure.uid}
         assert refiller.calls == []
         assert metrics == {}
+    finally:
+        _clear_partition(partition_id)
+
+
+def test_complete_group_refill_replaces_materializable_failed_groups(tq_init, partition_id):
+    finished = PromptSpec(uid=_uid(), status="finished")
+    failure = PromptSpec(uid=_uid(), status="failure", sessions=1)
+    _produce(partition_id, [finished, failure]).join_and_check()
+
+    refiller = FakeRefiller(partition_id, global_steps=1)
+    rb = _make_rb(refill_all_failed_groups=True, refill_fn=refiller)
+    try:
+        batch, metrics = rb.sample(global_steps=1, partition_id=partition_id, batch_size=2)
+
+        assert failure.uid not in _uids_of(batch.keys)
+        assert refiller.calls == [1]
+        assert metrics["validation/rollout_failure/evicted_samples"] == 1
     finally:
         _clear_partition(partition_id)
 

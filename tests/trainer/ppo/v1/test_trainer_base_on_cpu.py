@@ -166,6 +166,16 @@ def test_builtin_filter_groups_forwards_total_generation_limit():
     assert sampler.max_num_gen_batches == 10
 
 
+def test_sampo_refills_every_failed_prompt_group():
+    trainer = _trainer_with_filter_groups({"enable": True, "metric": "acc"})
+    trainer.config.algorithm.adv_estimator = "sampo"
+
+    sampler = trainer._build_replay_buffer()
+
+    assert sampler.refill_all_failed_groups is True
+    assert sampler.gen_batch_size == 1
+
+
 def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
     trainer = _StubTrainer.__new__(_StubTrainer)
     trainer.config = OmegaConf.create(

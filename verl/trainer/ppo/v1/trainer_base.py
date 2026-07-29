@@ -201,9 +201,14 @@ class PPOTrainer(ABC):
         if not has_custom_sampler:
             filter_groups_metric = self._resolve_filter_groups_metric()
             sync_refill_failed_groups = bool(sampler_config.get("sync_refill_failed_groups", False))
+            refill_all_failed_groups = self.config.algorithm.get("adv_estimator") in (
+                core_algos.AdvantageEstimator.SAMPO,
+                "sampo",
+            )
             replay_buffer_kwargs.update(
                 filter_groups_metric=filter_groups_metric,
                 sync_refill_failed_groups=sync_refill_failed_groups,
+                refill_all_failed_groups=refill_all_failed_groups,
             )
             if sampler_cls is ReplayBuffer:
                 filter_groups = self.config.algorithm.get("filter_groups", None)
@@ -216,7 +221,7 @@ class PPOTrainer(ABC):
                 replay_buffer_kwargs.update(
                     train_batch_size=train_batch_size,
                     gen_batch_size=1
-                    if filter_groups_metric is not None or sync_refill_failed_groups
+                    if filter_groups_metric is not None or sync_refill_failed_groups or refill_all_failed_groups
                     else (self.config.data.get("gen_batch_size", None) or train_batch_size),
                     max_inflight_gen_batches=max_inflight_gen_batches,
                     max_num_gen_batches=max_num_gen_batches,
@@ -712,7 +717,13 @@ class PPOTrainer(ABC):
         filter_groups = self.config.algorithm.get("filter_groups", None)
         dapo_enabled = bool(filter_groups is not None and filter_groups.get("enable", False))
         sync_refill_failed_groups = bool(self.config.trainer.v1.sampler.get("sync_refill_failed_groups", False))
-        requires_exact_refill = self.trainer_mode != "sync" or dapo_enabled or sync_refill_failed_groups
+        sampo_enabled = self.config.algorithm.get("adv_estimator") in (
+            core_algos.AdvantageEstimator.SAMPO,
+            "sampo",
+        )
+        requires_exact_refill = (
+            self.trainer_mode != "sync" or dapo_enabled or sync_refill_failed_groups or sampo_enabled
+        )
         if requires_exact_refill:
             user_gen_batch_size = self.config.data.get("gen_batch_size", None)
             if user_gen_batch_size not in (None, 1):

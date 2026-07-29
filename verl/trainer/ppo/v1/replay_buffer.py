@@ -145,6 +145,7 @@ class ReplayBuffer:
         max_inflight_gen_batches: int = 1,
         max_num_gen_batches: int = 0,
         sync_refill_failed_groups: bool = False,
+        refill_all_failed_groups: bool = False,
     ):
         self.trainer_mode = trainer_mode
         self.trainer_config = trainer_config
@@ -159,6 +160,7 @@ class ReplayBuffer:
         self.max_inflight_gen_batches = max_inflight_gen_batches
         self.max_num_gen_batches = max_num_gen_batches
         self.sync_refill_failed_groups = sync_refill_failed_groups
+        self.refill_all_failed_groups = refill_all_failed_groups
 
         assert isinstance(self.max_off_policy_threshold, int) and self.max_off_policy_threshold > 0, (
             f"Invalid max off policy threshold: {self.max_off_policy_threshold}, must be an integer greater than 0"
@@ -168,8 +170,8 @@ class ReplayBuffer:
         )
         if self.filter_groups_metric is not None and self.refill_fn is None:
             raise ValueError("Group filtering (filter_groups_metric) requires refill_fn to replace evicted groups")
-        if self.sync_refill_failed_groups and self.refill_fn is None:
-            raise ValueError("sync_refill_failed_groups requires refill_fn to replace failed groups")
+        if (self.sync_refill_failed_groups or self.refill_all_failed_groups) and self.refill_fn is None:
+            raise ValueError("failed-group refill requires refill_fn to replace failed groups")
         self._validate_mode_config()
         # partition_id => {key: tag}
         self.partitions: dict[str, dict[str, dict]] = defaultdict(dict)
@@ -317,7 +319,9 @@ class ReplayBuffer:
 
         dapo_uids, dapo_counts = self._dapo_filtered_keys(partition_id)
         failed_uids = set()
-        if self.sync_refill_failed_groups:
+        if self.refill_all_failed_groups:
+            failed_uids = set(self.failure_keys[partition_id])
+        elif self.sync_refill_failed_groups:
             materializable_uids = {key.split("_")[0] for key in self.partitions[partition_id]}
             failed_uids = self.failure_keys[partition_id] - materializable_uids
         return set(), dapo_uids, failed_uids, dapo_counts
