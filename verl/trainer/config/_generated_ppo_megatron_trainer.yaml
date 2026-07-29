@@ -918,6 +918,7 @@ distillation:
     clip_ratio: 0.2
     clip_ratio_low: 0.2
     clip_ratio_high: 0.2
+  enable_resource_pool: true
   n_gpus_per_node: 8
   nnodes: 0
   teacher_models:

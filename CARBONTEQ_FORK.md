@@ -207,6 +207,21 @@ before rollout sleep; `trainer_base.py` merges it into the current step.
 CPU regression coverage:
 `tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py`.
 
+### Colocate distillation teachers with the actor pool
+
+The upstream distillation path always allocates a dedicated teacher resource
+pool in addition to the actor/rollout pool. That makes a one-GPU student plus
+teacher composition request two Ray GPUs even though the teacher loop already
+supports colocated vLLM servers and coordinated rollout sleep/wake.
+
+`distillation.enable_resource_pool` now selects the topology explicitly. Its
+default remains `true` for backward compatibility. When false, both legacy and
+V1 trainers map `Role.TeacherModel` to `global_pool` and align the teacher
+topology with the trainer topology instead of adding another GPU pool.
+
+CPU regression coverage:
+`tests/trainer/test_distillation_resource_pool_on_cpu.py`.
+
 ## Compatibility and operating constraints
 
 - The post-training agent loop must provide `sampo_turn_spans`,
@@ -264,6 +279,7 @@ ruff check \
   tests/trainer/ppo/test_sampo_advantage_on_cpu.py \
   tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py \
   tests/trainer/ppo/v1/test_trainer_base_on_cpu.py \
+  tests/trainer/test_distillation_resource_pool_on_cpu.py \
   tests/utils/reward_score/test_sandbox_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
 pytest -q \
