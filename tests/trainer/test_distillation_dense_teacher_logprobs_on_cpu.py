@@ -1,7 +1,10 @@
 import torch
 from tensordict import TensorDict
 
-from verl.trainer.distillation.losses import _teacher_log_probs_to_response
+from verl.trainer.distillation.losses import (
+    _teacher_log_probs_to_response,
+    compute_distillation_loss_range,
+)
 
 
 def test_dense_teacher_log_probs_are_sliced_to_padded_responses() -> None:
@@ -97,4 +100,14 @@ def test_nested_teacher_log_probs_use_logical_micro_batch_rows() -> None:
                 [-7.0, -8.0],
             ]
         ),
+    )
+
+
+def test_distillation_loss_range_ignores_fully_masked_padding_micro_batch() -> None:
+    assert (
+        compute_distillation_loss_range(
+            distillation_losses=torch.tensor([[1.0]]),
+            response_mask=torch.tensor([[False]]),
+        )
+        == {}
     )
