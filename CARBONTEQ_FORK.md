@@ -30,7 +30,8 @@ Published SAMPO evidence, Python 3.13, and vLLM-selection commit:
 
 Published dense distillation teacher-logprob alignment implementation:
 `83a0fa8edb5c65014604d32546f2362c1151677a`, with nested micro-batch
-handling in `8c22e71ef9eafeecafa3942a014b7f9ea343bee0`.
+handling in `8c22e71ef9eafeecafa3942a014b7f9ea343bee0` and fully masked padding
+handling in `8cb6d338dbefb5b387647ab7dadbe5b23218c51b`.
 
 ## Maintained delta
 
@@ -236,6 +237,9 @@ full backing-storage length and failed during the first forward/backward pass.
 The estimator now slices both dense inputs and logical rows of nested
 micro-batch views from `prompt_length - 1`, matching the vLLM prompt-logprob
 convention that omits the first token and appends a trailing dummy row.
+Distillation diagnostics also omit min, max, and absolute-loss samples for a
+fully masked synthetic padding micro-batch. Its optimizer loss remains zero
+under the existing global-batch normalization.
 
 CPU regression coverage:
 `tests/trainer/test_distillation_dense_teacher_logprobs_on_cpu.py`.
