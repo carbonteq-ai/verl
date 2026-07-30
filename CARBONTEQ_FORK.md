@@ -29,7 +29,8 @@ Published SAMPO evidence, Python 3.13, and vLLM-selection commit:
 `b42495dfe138dcc114c39b486a2c58c0e1ff6f29`.
 
 Published dense distillation teacher-logprob alignment implementation:
-`83a0fa8edb5c65014604d32546f2362c1151677a`.
+`83a0fa8edb5c65014604d32546f2362c1151677a`, with nested micro-batch
+handling in `8c22e71ef9eafeecafa3942a014b7f9ea343bee0`.
 
 ## Maintained delta
 
@@ -222,17 +223,19 @@ default remains `true` for backward compatibility. When false, both legacy and
 V1 trainers map `Role.TeacherModel` to `global_pool` and align the teacher
 topology with the trainer topology instead of adding another GPU pool.
 
-### Align dense teacher log probabilities with response tokens
+### Align teacher log probabilities with response tokens
 
-Qwen 3.5 training intentionally keeps `use_remove_padding=false`. In that
-mode, the teacher loop retains prompt log probabilities as a dense
-`[batch, prompt + response, 1]` tensor, while the reverse-KL estimator
-previously passed it to the jagged-only `no_padding_2_padding` helper. The
-result was a token-count assertion during the first forward/backward pass.
+The teacher loop initially retains prompt log probabilities as a dense
+`[batch, prompt + response, 1]` tensor. The actor update then converts them to
+a jagged tensor, and engine micro-batching can produce a logical nested view
+whose backing storage still contains rows from the larger optimizer batch.
+The reverse-KL estimator previously passed that view to
+`no_padding_2_padding`, which compared the logical sequence lengths with the
+full backing-storage length and failed during the first forward/backward pass.
 
-The estimator now preserves the existing jagged path and slices dense teacher
-rows from `prompt_width - 1`, matching the vLLM prompt-logprob convention that
-omits the first token and appends a trailing dummy row.
+The estimator now slices both dense inputs and logical rows of nested
+micro-batch views from `prompt_length - 1`, matching the vLLM prompt-logprob
+convention that omits the first token and appends a trailing dummy row.
 
 CPU regression coverage:
 `tests/trainer/test_distillation_dense_teacher_logprobs_on_cpu.py`.
@@ -297,6 +300,7 @@ ruff check \
   tests/trainer/ppo/test_sampo_advantage_on_cpu.py \
   tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py \
   tests/trainer/ppo/v1/test_trainer_base_on_cpu.py \
+  tests/trainer/test_distillation_dense_teacher_logprobs_on_cpu.py \
   tests/trainer/test_distillation_resource_pool_on_cpu.py \
   tests/utils/reward_score/test_sandbox_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
@@ -307,6 +311,7 @@ pytest -q \
   tests/trainer/ppo/test_sampo_advantage_on_cpu.py \
   tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py \
   tests/trainer/ppo/v1/test_trainer_base_on_cpu.py \
+  tests/trainer/test_distillation_dense_teacher_logprobs_on_cpu.py \
   tests/utils/reward_score/test_sandbox_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
 git diff --check
