@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 import torch
+import torch.nn.functional as F
 from tensordict import TensorDict
 
 from verl.base_config import BaseConfig
@@ -371,7 +372,31 @@ def _teacher_log_probs_to_response(data: TensorDict) -> torch.Tensor:
     """
     teacher_log_probs = data["teacher_logprobs"]
     if teacher_log_probs.is_nested:
-        return no_padding_2_padding(teacher_log_probs, data).squeeze(-1)
+        prompts = data["prompts"]
+        responses = data["responses"]
+        if prompts.is_nested or responses.is_nested:
+            prompt_lens = prompts.offsets().diff()
+            response_lens = responses.offsets().diff()
+            response_width = int(response_lens.max().item())
+        else:
+            attention_mask = data["attention_mask"]
+            prompt_lens = attention_mask[:, : prompts.shape[1]].sum(dim=1)
+            response_lens = attention_mask[:, prompts.shape[1] :].sum(dim=1)
+            response_width = responses.shape[1]
+
+        # A nested tensor sliced into an engine micro-batch can retain the
+        # original batch's backing values. Iterate its logical rows instead of
+        # passing ``values()`` to no_padding_2_padding, whose full-storage
+        # length assertion is invalid for that view.
+        response_log_probs = []
+        for sample, prompt_len, response_len in zip(
+            teacher_log_probs.unbind(), prompt_lens, response_lens, strict=True
+        ):
+            prompt_len_int = int(prompt_len.item())
+            response_len_int = int(response_len.item())
+            response = sample[prompt_len_int - 1 : prompt_len_int + response_len_int - 1].squeeze(-1)
+            response_log_probs.append(F.pad(response, (0, response_width - response_len_int)))
+        return torch.stack(response_log_probs)
 
     prompts = data["prompts"]
     responses = data["responses"]
