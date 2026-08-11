@@ -2,16 +2,22 @@
 
 ## Status
 
-**Published SAMPO candidate with a published release delta.** The
-maintained CarbonTeq fork and earlier SAMPO branch are published. The current
-SAMPO telemetry, local Python 3.13, and immutable vLLM-selection changes are
-published on `codex/sampo-v1-metadata`. They remain blocked from production
-release until selected by the framework's dependency-only lock and exercised
-by the bounded GPU gates.
+**Release candidate `0.9.0.dev1`, unpublished.** This candidate advances the
+published runtime, SAMPO, and dense-distillation lineage at
+`c3f49b9117b882fa888e25e4a771461e13167848` without changing its supported
+algorithm surface. It exists so consumers can select one immutable fork commit
+and a uniquely versioned private distribution rather than an ambiguous
+`0.9.0.dev` build.
+
+The candidate must pass the focused CPU suite, build/install verification, a
+Posttrain runtime-image rebuild, and the bounded GPU gates before it is
+promoted on `origin/main` and published to the internal package index. The
+existing SAMPO and distillation evidence remains historical qualification; it
+does not make a newly built distribution release-qualified.
 
 Upstream repository: `https://github.com/verl-project/verl.git`
 
-Upstream base for the published SAMPO line:
+Upstream base for the maintained line:
 `a35908ca3c9632859c58d6a2855d858918ae21dc`
 
 Reconstruction base for the published runtime delta:
@@ -32,6 +38,10 @@ Published dense distillation teacher-logprob alignment implementation:
 `83a0fa8edb5c65014604d32546f2362c1151677a`, with nested micro-batch
 handling in `8c22e71ef9eafeecafa3942a014b7f9ea343bee0` and fully masked padding
 handling in `8cb6d338dbefb5b387647ab7dadbe5b23218c51b`.
+
+Release-candidate parent: `c3f49b9117b882fa888e25e4a771461e13167848`.
+The published release commit and index artifact hashes are recorded here only
+after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
 
@@ -284,7 +294,7 @@ PATH="$PWD/.venv/bin:$PATH" bash scripts/generate_trainer_config.sh
 The published focused CPU suite passes with 32 tests. The generator
 intentionally reports generated files as changed until staged or committed.
 
-Unpublished runtime-delta source/CPU validation:
+Release-candidate source/CPU validation:
 
 ```bash
 ruff check \
@@ -321,7 +331,7 @@ pytest -q \
 git diff --check
 ```
 
-Runtime-delta release also requires the separately locked veRL environment to
+Release promotion also requires the separately locked veRL environment to
 resolve from this candidate and GPU qualification for:
 
 - dense-FSDP chunked entropy;
