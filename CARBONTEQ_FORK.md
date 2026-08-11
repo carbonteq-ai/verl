@@ -2,18 +2,25 @@
 
 ## Status
 
-**Release candidate `0.9.0.dev1`, unpublished.** This candidate advances the
-published runtime, SAMPO, and dense-distillation lineage at
-`c3f49b9117b882fa888e25e4a771461e13167848` without changing its supported
-algorithm surface. It exists so consumers can select one immutable fork commit
-and a uniquely versioned private distribution rather than an ambiguous
-`0.9.0.dev` build.
+**Published pre-release `0.9.0.dev1`.** Tag `carbonteq-v0.9.0.dev1` resolves
+to `a6fe39c22719ec981ed8544ad8feffd59995cc13`, a versioned release commit on
+top of the runtime, SAMPO, and dense-distillation lineage at
+`c3f49b9117b882fa888e25e4a771461e13167848`. It does not change the supported
+algorithm surface; it gives consumers one immutable fork commit and uniquely
+versioned private distribution instead of an ambiguous `0.9.0.dev` build.
 
-The candidate must pass the focused CPU suite, build/install verification, a
-Posttrain runtime-image rebuild, and the bounded GPU gates before it is
-promoted on `origin/main` and published to the internal package index. The
-existing SAMPO and distillation evidence remains historical qualification; it
-does not make a newly built distribution release-qualified.
+The release commit passed the focused 114-test Python 3.13 CPU suite, wheel and
+source-distribution build, installed-wheel import, and readback from the
+`carbonteq/dev` internal index. Its wheel SHA-256 is
+`4f1b0cc3eff1a8d28b68b10d57b6f5ff24a31aa1e25bd477bde5c02127298aed`; its
+source distribution SHA-256 is
+`2bbae01d1d38377ab609f1333db5ded30365f6472e822e963e904d0a30058e54`.
+
+The matching Posttrain kind image passed an immutable Docker/Bake import smoke
+and is recorded in the framework consumer document. Broad GPU qualification
+and promotion to `origin/main` remain separate gates. The existing SAMPO and
+distillation evidence remains historical qualification; publishing these bytes
+does not make every veRL workload production-qualified.
 
 Upstream repository: `https://github.com/verl-project/verl.git`
 
@@ -40,8 +47,7 @@ handling in `8c22e71ef9eafeecafa3942a014b7f9ea343bee0` and fully masked padding
 handling in `8cb6d338dbefb5b387647ab7dadbe5b23218c51b`.
 
 Release-candidate parent: `c3f49b9117b882fa888e25e4a771461e13167848`.
-The published release commit and index artifact hashes are recorded here only
-after the candidate is committed, pushed, built once, and read back.
+Release commit: `a6fe39c22719ec981ed8544ad8feffd59995cc13`.
 
 ## Maintained delta
 
