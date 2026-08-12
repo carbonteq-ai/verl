@@ -2,7 +2,7 @@
 
 ## Status
 
-**Release candidate `0.9.0.dev1`, unpublished.** This candidate advances the
+**Release candidate `0.9.0.dev2`, unpublished.** This candidate advances the
 published runtime, SAMPO, and dense-distillation lineage at
 `c3f49b9117b882fa888e25e4a771461e13167848` without changing its supported
 algorithm surface. It exists so consumers can select one immutable fork commit
@@ -52,6 +52,23 @@ The published branch includes the earlier candidate commits `05f83242` and
 speculative-decoding runtime totals. Their consumer-facing qualification state
 is recorded in `docs/tooling/verl/README.md` in the post-training framework
 repository.
+
+### Preserve repaired 3-D position IDs through mini-batch selection
+
+The upstream workaround for 3-D VLM position IDs marks the sequence dimension
+as ragged after a TensorDict/Ray round trip. Its underlying PyTorch nested
+storage can still describe the fixed position-ID channel dimension as jagged.
+Calling `unbind()` through the repaired target axis then attempts to split a
+sequence using channel lengths, which fails for Qwen 3.5's four-channel
+position IDs during a real actor update.
+
+The fork now detects that storage/target-axis mismatch only while selecting
+rows, temporarily uses the storage axis to read complete samples, and rebuilds
+the selected tensor on the intended sequence axis. Correctly constructed
+non-last-ragged tensors retain their existing fast path.
+
+CPU regression coverage:
+`tests/test_protocol_v2_on_cpu.py::test_index_select_tensor_dict_handles_repaired_3d_position_ids`.
 
 ### SAMPO hierarchical multi-turn advantages
 
