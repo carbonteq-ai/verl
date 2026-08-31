@@ -2,6 +2,17 @@
 
 ## Status
 
+Gemma replicated-buffer export backport (2026-10-02): adopt merged upstream
+PR #7610, commit ddb96db19850bf820fe0aa13e4cb71b21f285869. The merger's
+merge_non_dtensor_shards retains one plain replicated tensor and rejects rank
+disagreement instead of concatenating it. This fixes the observed ordinary
+Gemma E2B single-rank scalar-buffer export crash and multi-rank buffer shapes.
+Files: verl/model_merger/fsdp_model_merger.py and the upstream regression
+tests/model_merger/test_fsdp_merge_non_dtensor_shards_on_cpu.py. Candidate base
+d3ca05a4; native export from the retained Gemma checkpoint remains a gate.
+On rebase, remove the backport once upstream includes #7610. No new upstream
+PR is needed. Open #8016 separately fixes mesh discovery; it is not adopted here.
+
 Declared native microbatch candidate (2026-10-02): engine/utils.py accepts
 optional ordered micro_batch_sizes on static batches. Positive sizes must
 cover all rows, preserve force_group_size, satisfy requested count limits and
