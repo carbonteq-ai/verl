@@ -492,10 +492,26 @@ def index_select_tensor_dict(batch: TensorDict, indices: torch.Tensor | list[int
             if isinstance(tensor, torch.Tensor) and not tensor.is_nested:
                 data_dict[key] = tensor[indices]
             elif isinstance(tensor, torch.Tensor) and tensor.is_nested:
-                tensor_lst = tensor.unbind()  # for performance
+                ragged_idx = getattr(tensor, "_ragged_idx", tensor.dim() - 1)
+                # `maybe_fix_3d_position_ids` records that the sequence axis
+                # is ragged after TensorDict's Ray round trip. PyTorch's
+                # original storage may still be jagged along another axis,
+                # however.  Unbinding through the recorded target axis then
+                # asks it to split sequence values using fixed position-ID
+                # channel counts. Recover the storage axis just long enough
+                # to read rows, then rebuild on the intended target axis.
+                storage_ragged_idx = _storage_ragged_idx(tensor, ragged_idx)
+                if storage_ragged_idx != ragged_idx:
+                    tensor._ragged_idx = storage_ragged_idx
+                    try:
+                        tensor_lst = tensor.unbind()  # for performance
+                    finally:
+                        tensor._ragged_idx = ragged_idx
+                else:
+                    tensor_lst = tensor.unbind()  # for performance
                 selected_tensors = [tensor_lst[idx] for idx in indices]
                 data_dict[key] = nested_tensor_from_tensor_list(
-                    selected_tensors, ragged_idx=getattr(tensor, "_ragged_idx", tensor.dim() - 1)
+                    selected_tensors, ragged_idx=ragged_idx
                 )
             else:
                 # This handles NonTensorStack (indexable by batch dim) and NonTensorData (scalar metadata).
@@ -508,6 +524,25 @@ def index_select_tensor_dict(batch: TensorDict, indices: torch.Tensor | list[int
         selected_batch = None
 
     return selected_batch
+
+
+def _storage_ragged_idx(tensor: torch.Tensor, target_ragged_idx: int) -> int:
+    """Return the nested-storage axis used to unbind a possibly repaired tensor."""
+
+    if target_ragged_idx < 1 or target_ragged_idx >= tensor.dim():
+        return target_ragged_idx
+    offsets = tensor.offsets()
+    if offsets.numel() == 0:
+        return target_ragged_idx
+    stored_length = int(offsets[-1].item())
+    values = tensor.values()
+    target_length = values.shape[target_ragged_idx - 1]
+    if stored_length == target_length:
+        return target_ragged_idx
+    for index, length in enumerate(values.shape, start=1):
+        if length == stored_length:
+            return index
+    return target_ragged_idx
 
 
 def union_tensor_dict(tensor_dict1: TensorDict, tensor_dict2: TensorDict) -> TensorDict:

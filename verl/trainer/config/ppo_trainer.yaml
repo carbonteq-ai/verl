@@ -76,6 +76,21 @@ algorithm:
   # Whether to normalize advantages by std (specific to GRPO)
   norm_adv_by_std_in_grpo: True
 
+  # SAMPO composes hierarchical multi-turn advantages with the GSPO loss.
+  sampo:
+
+    # Required when using verl.utils.omega_conf_to_dataclass to instantiate dataclass configs
+    _target_: verl.trainer.config.SampoConfig
+
+    # Discount applied while propagating step rewards backward across assistant turns
+    discount_gamma: 0.95
+
+    # Weight of anchor-state-relative turn advantage in the joint advantage
+    step_advantage_weight: 1.0
+
+    # "mean" centers within a group; "mean_std" also divides by sample std
+    advantage_normalization: mean
+
   # Group filtering configuration used by DAPO and entropy-based sampling
   filter_groups:
 

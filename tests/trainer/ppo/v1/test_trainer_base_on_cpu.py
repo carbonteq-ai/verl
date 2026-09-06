@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import numpy as np
+import torch
 from omegaconf import OmegaConf
+from tensordict import NonTensorData, NonTensorStack, TensorDict
+from transfer_queue import KVBatchMeta
 
 from verl.trainer.ppo.v1.replay_buffer import ReplayBuffer, ReplayBufferAsync
-from verl.trainer.ppo.v1.trainer_base import PPOTrainer
+from verl.trainer.ppo.v1.trainer_base import PPOTrainer, _sampo_spans_from_lengths
 
 
 class _StubTrainer(PPOTrainer):
@@ -87,6 +91,7 @@ def test_custom_sampler_skips_builtin_filter_groups_validation():
     assert "train_batch_size" not in sampler.kwargs
     assert "gen_batch_size" not in sampler.kwargs
     assert "max_inflight_gen_batches" not in sampler.kwargs
+    assert "max_num_gen_batches" not in sampler.kwargs
     assert "sync_refill_failed_groups" not in sampler.kwargs
 
 
@@ -99,6 +104,7 @@ def test_builtin_filter_groups_uses_default_inflight_limit():
     assert sampler.train_batch_size == 64
     assert sampler.gen_batch_size == 1
     assert sampler.max_inflight_gen_batches == 1
+    assert sampler.max_num_gen_batches == 0
 
 
 def test_builtin_filter_groups_forwards_configured_inflight_limit():
@@ -152,14 +158,112 @@ def test_sync_failure_refill_overrides_dataloader_generation_batch_size():
     warning.assert_any_call("data.gen_batch_size=8 is overridden to 1.")
 
 
-def test_builtin_filter_groups_warns_when_total_generation_limit_is_configured():
+def test_builtin_filter_groups_forwards_total_generation_limit():
     trainer = _trainer_with_filter_groups({"enable": True, "metric": "acc", "max_num_gen_batches": 10})
 
-    with patch("verl.trainer.ppo.v1.trainer_base.logger.warning") as warning:
-        trainer._build_replay_buffer()
+    sampler = trainer._build_replay_buffer()
 
-    warning.assert_called_once_with(
-        "algorithm.filter_groups.max_num_gen_batches=%s is ignored by the built-in V1 ReplayBuffer; "
-        "use max_inflight_gen_batches to bound concurrent Sync DAPO generation.",
-        10,
+    assert sampler.max_num_gen_batches == 10
+
+
+def test_sampo_refills_every_failed_prompt_group():
+    trainer = _trainer_with_filter_groups({"enable": True, "metric": "acc"})
+    trainer.config.algorithm.adv_estimator = "sampo"
+
+    sampler = trainer._build_replay_buffer()
+
+    assert sampler.refill_all_failed_groups is True
+    assert sampler.gen_batch_size == 1
+
+
+def test_sampo_advantage_fetches_and_forwards_rollout_metadata():
+    trainer = _StubTrainer.__new__(_StubTrainer)
+    trainer.config = OmegaConf.create(
+        {
+            "algorithm": {
+                "adv_estimator": "sampo",
+                "gamma": 1.0,
+                "lam": 1.0,
+                "use_kl_in_reward": False,
+                "norm_adv_by_std_in_grpo": False,
+            },
+            "actor_rollout_ref": {"rollout": {"n": 2}},
+        }
     )
+    batch = KVBatchMeta(
+        partition_id="train",
+        keys=["opaque-a_0_0", "opaque-b_1_0"],
+        tags=[{}, {}],
+    )
+    response_mask = torch.nested.as_nested_tensor(
+        [torch.ones(2, dtype=torch.int64), torch.ones(2, dtype=torch.int64)],
+        layout=torch.jagged,
+    )
+    rm_scores = torch.nested.as_nested_tensor(
+        [torch.tensor([0.0, 1.0]), torch.tensor([0.0, 2.0])],
+        layout=torch.jagged,
+    )
+    transfer_data = TensorDict(
+        {
+            # The replay-buffer key, not a potentially trajectory-local stored uid,
+            # owns SAMPO prompt-group identity.
+            "uid": NonTensorStack.from_list([NonTensorData("trajectory-a"), NonTensorData("trajectory-b")]),
+            "response_mask": response_mask,
+            "rm_scores": rm_scores,
+            "extra_fields": NonTensorStack.from_list(
+                [
+                    NonTensorData(
+                        {
+                            "sampo_prompt_group_id": "dataset-row-0",
+                            "sampo_turn_lengths": [2],
+                            "sampo_turn_spans": [[0, 2]],
+                            "sampo_anchor_state_keys": ["anchor"],
+                            "sampo_step_rewards": [1.0],
+                        }
+                    ),
+                    NonTensorData(
+                        {
+                            "sampo_prompt_group_id": "dataset-row-0",
+                            "sampo_turn_lengths": [2],
+                            "sampo_turn_spans": [[0, 2]],
+                            "sampo_anchor_state_keys": ["anchor"],
+                            "sampo_step_rewards": [2.0],
+                        }
+                    ),
+                ]
+            ),
+        },
+        batch_size=[2],
+    )
+    computed = MagicMock()
+    computed.batch = {
+        "advantages": torch.ones(2, 2),
+        "returns": torch.ones(2, 2),
+    }
+
+    with (
+        patch("verl.trainer.ppo.v1.trainer_base.tq.kv_batch_get", return_value=transfer_data) as get,
+        patch("verl.trainer.ppo.v1.trainer_base.tq.kv_batch_put", return_value=batch),
+        patch(
+            "verl.trainer.ppo.v1.trainer_base.compute_advantage_for_multi_trajectories",
+            return_value=computed,
+        ) as compute,
+    ):
+        trainer._compute_advantage(batch, metrics={})
+
+    selected_fields = get.call_args.kwargs["select_fields"]
+    assert selected_fields[-1] == "extra_fields"
+    forwarded = compute.call_args.args[0].non_tensor_batch
+    assert forwarded["uid"].tolist() == ["dataset-row-0", "dataset-row-0"]
+    assert "sampo_prompt_group_id" not in forwarded
+    assert "sampo_turn_lengths" not in forwarded
+    assert forwarded["sampo_turn_spans"].tolist() == [[[0, 2]], [[0, 2]]]
+    assert forwarded["sampo_anchor_state_keys"].tolist() == [["anchor"], ["anchor"]]
+    assert forwarded["sampo_step_rewards"].tolist() == [[1.0], [2.0]]
+    assert all(value.dtype == np.dtype("O") for value in forwarded.values())
+
+
+def test_sampo_turn_lengths_align_to_materialized_response_mask():
+    mask = torch.tensor([1, 1, 0, 1, 1, 1], dtype=torch.int64)
+
+    assert _sampo_spans_from_lengths([2, 3], mask) == [[0, 2], [3, 6]]

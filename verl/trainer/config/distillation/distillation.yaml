@@ -55,10 +55,14 @@ distillation_loss:
   clip_ratio_high: 0.2
 
 
-# Number of GPUs per node in the distillation teacher resource pool
+# If true, teachers use a dedicated GPU resource pool. If false, teacher
+# inference is colocated with the actor and rollout on the global pool.
+enable_resource_pool: true
+
+# Number of GPUs per node available to teacher inference
 n_gpus_per_node: 8
 
-# Number of nodes in the distillation teacher resource pool
+# Number of nodes available to teacher inference
 nnodes: 0
 
 # multi-teacher configs

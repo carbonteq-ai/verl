@@ -408,9 +408,18 @@ actor_rollout_ref:
     override_config: {}
     enable_gradient_checkpointing: true
     enable_activation_offload: false
+    bitsandbytes:
+      _target_: verl.workers.config.BitsAndBytesQuantizationConfig
+      enable: false
+      load_in_4bit: true
+      quant_type: nf4
+      compute_dtype: bf16
+      use_double_quant: true
+      quant_storage: bf16
     use_remove_padding: true
     lora_rank: 0
     lora_alpha: 16
+    lora_dropout: 0.0
     target_modules: all-linear
     exclude_modules: null
     lora_adapter_path: null
@@ -632,9 +641,18 @@ critic:
     override_config: {}
     enable_gradient_checkpointing: true
     enable_activation_offload: false
+    bitsandbytes:
+      _target_: verl.workers.config.BitsAndBytesQuantizationConfig
+      enable: false
+      load_in_4bit: true
+      quant_type: nf4
+      compute_dtype: bf16
+      use_double_quant: true
+      quant_storage: bf16
     use_remove_padding: true
     lora_rank: 0
     lora_alpha: 16
+    lora_dropout: 0.0
     target_modules: all-linear
     exclude_modules: null
     lora_adapter_path: null
@@ -808,6 +826,11 @@ algorithm:
   lam: 1.0
   adv_estimator: gae
   norm_adv_by_std_in_grpo: true
+  sampo:
+    _target_: verl.trainer.config.SampoConfig
+    discount_gamma: 0.95
+    step_advantage_weight: 1.0
+    advantage_normalization: mean
   filter_groups:
     _target_: verl.trainer.config.FilterGroupsConfig
     enable: false
@@ -842,6 +865,7 @@ distillation:
     clip_ratio: 0.2
     clip_ratio_low: 0.2
     clip_ratio_high: 0.2
+  enable_resource_pool: true
   n_gpus_per_node: 8
   nnodes: 0
   teacher_models:

@@ -20,6 +20,7 @@ implement PPO-like algorithms.
 
 __all__ = ["register_adv_est", "get_adv_estimator_fn", "AdvantageEstimator"]
 
+import math
 from collections import defaultdict
 from enum import Enum
 from typing import Any, Callable, Optional
@@ -108,6 +109,7 @@ class AdvantageEstimator(str, Enum):
     OPTIMAL_TOKEN_BASELINE = "optimal_token_baseline"
     TIR_OPTIMAL_TOKEN_BASELINE = "tir_optimal_token_baseline"
     GDPO = "gdpo"
+    SAMPO = "sampo"
 
 
 ADV_ESTIMATOR_REGISTRY: dict[str, Any] = {}
@@ -356,6 +358,168 @@ def compute_grpo_vectorized_outcome_advantage(
             scalars = scores - mean_g[g]
         advantages = scalars.unsqueeze(-1) * response_mask
         return advantages, advantages
+
+
+@register_adv_est(AdvantageEstimator.SAMPO)
+def compute_sampo_outcome_advantage(
+    token_level_rewards: torch.Tensor,
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    turn_spans: np.ndarray,
+    anchor_state_keys: np.ndarray,
+    step_rewards: np.ndarray,
+    num_repeat: int = 1,
+    config: Optional[AlgoConfig] = None,
+    metrics: Optional[dict[str, float]] = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute SAMPO episode- and anchor-state-relative token advantages.
+
+    This follows the GiGPO advantage composition used by the official SAMPO
+    implementation while retaining a complete multi-turn trajectory in each
+    batch row. Each turn span therefore receives its own anchor-relative
+    advantage and GSPO can still form one sequence ratio over the trajectory's
+    sampled policy tokens.
+    """
+
+    if config is None:
+        raise ValueError("SAMPO advantage estimation requires algorithm configuration")
+    sampo = config.sampo
+    normalization = sampo.advantage_normalization
+    if normalization not in {"mean", "mean_std"}:
+        raise ValueError("SAMPO advantage_normalization must be 'mean' or 'mean_std'")
+    gamma = float(sampo.discount_gamma)
+    step_weight = float(sampo.step_advantage_weight)
+    if not 0.0 < gamma <= 1.0:
+        raise ValueError("SAMPO discount_gamma must be in (0, 1]")
+    if step_weight < 0.0:
+        raise ValueError("SAMPO step_advantage_weight cannot be negative")
+
+    batch_size, response_length = response_mask.shape
+    metadata = (index, turn_spans, anchor_state_keys, step_rewards)
+    if any(len(values) != batch_size for values in metadata):
+        raise ValueError("SAMPO metadata must align with the response batch")
+
+    with torch.no_grad():
+        episode_rewards = token_level_rewards.sum(dim=-1)
+        episode_advantages = torch.zeros_like(episode_rewards)
+        prompt_groups: dict[object, list[int]] = defaultdict(list)
+        for row, prompt_id in enumerate(index):
+            prompt_groups[prompt_id].append(row)
+        group_sizes = sorted(len(rows) for rows in prompt_groups.values())
+        for rows in prompt_groups.values():
+            if len(rows) != num_repeat:
+                raise ValueError(
+                    "SAMPO requires complete prompt groups matching rollout.n; "
+                    f"expected={num_repeat}, observed_group_sizes={group_sizes}"
+                )
+            values = episode_rewards[rows]
+            episode_advantages[rows] = _sampo_normalize(values, normalization)
+
+        parsed_spans: list[list[tuple[int, int]]] = []
+        parsed_anchors: list[list[str]] = []
+        discounted_returns: list[list[torch.Tensor]] = []
+        sparse_reward_rows = 0
+        anchor_groups: dict[tuple[object, str], list[tuple[int, int, torch.Tensor]]] = defaultdict(list)
+        for row in range(batch_size):
+            spans = _validate_sampo_turn_metadata(
+                turn_spans[row],
+                anchor_state_keys[row],
+                step_rewards[row],
+                response_mask[row],
+                response_length,
+            )
+            anchors = [str(value) for value in anchor_state_keys[row]]
+            rewards = list(step_rewards[row])
+            if all(value is None for value in rewards):
+                resolved = [episode_rewards.new_zeros(()) for _ in rewards]
+                resolved[-1] = episode_rewards[row]
+                sparse_reward_rows += 1
+            elif all(value is not None for value in rewards):
+                resolved = []
+                for value in rewards:
+                    numeric = float(value)
+                    if not math.isfinite(numeric):
+                        raise ValueError("SAMPO step rewards must be finite")
+                    resolved.append(episode_rewards.new_tensor(numeric))
+            else:
+                raise ValueError("SAMPO step rewards must be complete or entirely absent")
+            returns = [episode_rewards.new_zeros(()) for _ in resolved]
+            running = episode_rewards.new_zeros(())
+            for turn_index in range(len(resolved) - 1, -1, -1):
+                running = resolved[turn_index] + gamma * running
+                returns[turn_index] = running
+            parsed_spans.append(spans)
+            parsed_anchors.append(anchors)
+            discounted_returns.append(returns)
+            for turn_index, (anchor, value) in enumerate(zip(anchors, returns, strict=True)):
+                anchor_groups[(index[row], anchor)].append((row, turn_index, value))
+
+        turn_advantages = [[episode_rewards.new_zeros(()) for _ in spans] for spans in parsed_spans]
+        for members in anchor_groups.values():
+            values = torch.stack([value for _, _, value in members])
+            normalized = _sampo_normalize(values, normalization)
+            for (row, turn_index, _), value in zip(members, normalized, strict=True):
+                turn_advantages[row][turn_index] = value
+
+        advantages = torch.zeros_like(response_mask, dtype=episode_rewards.dtype)
+        for row, spans in enumerate(parsed_spans):
+            for turn_index, (start, end) in enumerate(spans):
+                advantages[row, start:end] = episode_advantages[row] + step_weight * turn_advantages[row][turn_index]
+        advantages *= response_mask
+        if metrics is not None:
+            flat_turn_advantages = [value for values in turn_advantages for value in values]
+            anchor_members = sum(len(members) for members in anchor_groups.values())
+            metrics.update(
+                {
+                    "sampo/episode_advantage_mean": float(episode_advantages.mean().item()),
+                    "sampo/turn_advantage_mean": float(
+                        torch.stack(flat_turn_advantages).mean().item()
+                    ),
+                    "sampo/anchor_group_size_mean": float(
+                        sum(len(members) ** 2 for members in anchor_groups.values()) / anchor_members
+                    ),
+                    "sampo/sparse_reward_projection_fraction": sparse_reward_rows / batch_size,
+                }
+            )
+    return advantages, advantages
+
+
+def _sampo_normalize(values: torch.Tensor, mode: str, epsilon: float = 1e-6) -> torch.Tensor:
+    centered = values - values.mean()
+    if mode == "mean" or values.numel() == 1:
+        return centered
+    return centered / (values.std(unbiased=True) + epsilon)
+
+
+def _validate_sampo_turn_metadata(
+    spans_value: Any,
+    anchors_value: Any,
+    rewards_value: Any,
+    response_mask: torch.Tensor,
+    response_length: int,
+) -> list[tuple[int, int]]:
+    try:
+        spans = [(int(value[0]), int(value[1])) for value in spans_value]
+        anchors = list(anchors_value)
+        rewards = list(rewards_value)
+    except (TypeError, ValueError, IndexError) as error:
+        raise ValueError("SAMPO turn metadata is malformed") from error
+    if not spans or len(spans) != len(anchors) or len(spans) != len(rewards):
+        raise ValueError("SAMPO requires aligned, non-empty turn metadata")
+    previous_end = 0
+    covered = torch.zeros_like(response_mask, dtype=torch.bool)
+    for (start, end), anchor in zip(spans, anchors, strict=True):
+        if start < previous_end or end <= start or end > response_length:
+            raise ValueError("SAMPO turn spans must be ordered and inside the response")
+        if not str(anchor).strip():
+            raise ValueError("SAMPO anchor-state keys cannot be empty")
+        if not bool(torch.all(response_mask[start:end] > 0)):
+            raise ValueError("SAMPO turn spans may contain only sampled policy tokens")
+        covered[start:end] = True
+        previous_end = end
+    if not torch.equal(covered, response_mask > 0):
+        raise ValueError("SAMPO turn spans must cover every sampled policy token")
+    return spans
 
 
 @register_adv_est(AdvantageEstimator.GDPO)  # or simply: @register_adv_est("gdpo")

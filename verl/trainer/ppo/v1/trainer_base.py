@@ -101,6 +101,39 @@ def apply_greedy_sampling_params(params: dict[str, Any]) -> None:
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "INFO"))
 
+SAMPO_ROLLOUT_METADATA_FIELDS = (
+    "sampo_prompt_group_id",
+    "sampo_turn_lengths",
+    "sampo_turn_spans",
+    "sampo_anchor_state_keys",
+    "sampo_step_rewards",
+)
+
+
+def _sampo_spans_from_lengths(lengths: Any, response_mask: torch.Tensor) -> list[list[int]]:
+    """Align stable per-turn policy-token lengths to the materialized response mask."""
+    try:
+        turn_lengths = [int(value) for value in lengths]
+    except (TypeError, ValueError) as error:
+        raise ValueError("SAMPO turn lengths are malformed") from error
+    if not turn_lengths or any(length <= 0 for length in turn_lengths):
+        raise ValueError("SAMPO turn lengths must be positive")
+    sampled = torch.nonzero(response_mask > 0, as_tuple=False).flatten().tolist()
+    if sum(turn_lengths) != len(sampled):
+        raise ValueError(
+            "SAMPO turn lengths must cover every sampled policy token; "
+            f"declared={sum(turn_lengths)}, observed={len(sampled)}"
+        )
+    spans: list[list[int]] = []
+    cursor = 0
+    for length in turn_lengths:
+        positions = sampled[cursor : cursor + length]
+        if positions != list(range(positions[0], positions[-1] + 1)):
+            raise ValueError("each SAMPO turn must be one contiguous sampled-policy span")
+        spans.append([positions[0], positions[-1] + 1])
+        cursor += length
+    return spans
+
 
 def _tq_supports_checkpoint() -> bool:
     """Whether the installed TransferQueue can snapshot/restore its state for checkpoint consistency."""
@@ -168,22 +201,30 @@ class PPOTrainer(ABC):
         if not has_custom_sampler:
             filter_groups_metric = self._resolve_filter_groups_metric()
             sync_refill_failed_groups = bool(sampler_config.get("sync_refill_failed_groups", False))
+            refill_all_failed_groups = self.config.algorithm.get("adv_estimator") in (
+                core_algos.AdvantageEstimator.SAMPO,
+                "sampo",
+            )
             replay_buffer_kwargs.update(
                 filter_groups_metric=filter_groups_metric,
                 sync_refill_failed_groups=sync_refill_failed_groups,
+                refill_all_failed_groups=refill_all_failed_groups,
             )
             if sampler_cls is ReplayBuffer:
                 filter_groups = self.config.algorithm.get("filter_groups", None)
                 max_inflight_gen_batches = 1
+                max_num_gen_batches = 0
                 if filter_groups_metric is not None:
                     max_inflight_gen_batches = filter_groups.get("max_inflight_gen_batches", 1)
+                    max_num_gen_batches = filter_groups.get("max_num_gen_batches", 0)
                 train_batch_size = self.config.data.train_batch_size
                 replay_buffer_kwargs.update(
                     train_batch_size=train_batch_size,
                     gen_batch_size=1
-                    if filter_groups_metric is not None or sync_refill_failed_groups
+                    if filter_groups_metric is not None or sync_refill_failed_groups or refill_all_failed_groups
                     else (self.config.data.get("gen_batch_size", None) or train_batch_size),
                     max_inflight_gen_batches=max_inflight_gen_batches,
+                    max_num_gen_batches=max_num_gen_batches,
                 )
         return sampler_cls(**replay_buffer_kwargs)
 
@@ -205,13 +246,6 @@ class PPOTrainer(ABC):
             "reward.reward_model.enable_resource_pool=True. A colocated reward model computes rewards only "
             "after replay-buffer sampling."
         )
-        max_num_gen_batches = filter_groups.get("max_num_gen_batches", 0)
-        if max_num_gen_batches > 0:
-            logger.warning(
-                "algorithm.filter_groups.max_num_gen_batches=%s is ignored by the built-in V1 ReplayBuffer; "
-                "use max_inflight_gen_batches to bound concurrent Sync DAPO generation.",
-                max_num_gen_batches,
-            )
         return str(filter_metric)
 
     def init(self):
@@ -546,6 +580,7 @@ class PPOTrainer(ABC):
             metrics.update(off_policy_metrics)
             batch.extra_info["temperature"] = self.config.actor_rollout_ref.rollout.temperature
             self.on_sample_end()
+            metrics.update(self._consume_rollout_metrics())
 
         # 2. [OPTIONAL] compute reward score with colocated reward model
         if self.reward_loop_manager.reward_loop_worker_handles is None:
@@ -623,6 +658,11 @@ class PPOTrainer(ABC):
         self._pending_sync_metrics = {}
         return metrics
 
+    def _consume_rollout_metrics(self) -> dict:
+        metrics = getattr(self, "_pending_rollout_metrics", None) or {}
+        self._pending_rollout_metrics = {}
+        return metrics
+
     def on_sample_begin(self):
         """Called at the beginning of sampling batch from replay buffer."""
         return
@@ -673,7 +713,13 @@ class PPOTrainer(ABC):
         filter_groups = self.config.algorithm.get("filter_groups", None)
         dapo_enabled = bool(filter_groups is not None and filter_groups.get("enable", False))
         sync_refill_failed_groups = bool(self.config.trainer.v1.sampler.get("sync_refill_failed_groups", False))
-        requires_exact_refill = self.trainer_mode != "sync" or dapo_enabled or sync_refill_failed_groups
+        sampo_enabled = self.config.algorithm.get("adv_estimator") in (
+            core_algos.AdvantageEstimator.SAMPO,
+            "sampo",
+        )
+        requires_exact_refill = (
+            self.trainer_mode != "sync" or dapo_enabled or sync_refill_failed_groups or sampo_enabled
+        )
         if requires_exact_refill:
             user_gen_batch_size = self.config.data.get("gen_batch_size", None)
             if user_gen_batch_size not in (None, 1):
@@ -775,14 +821,19 @@ class PPOTrainer(ABC):
 
         distillation_config = config.get("distillation")
         if is_distillation_enabled(distillation_config):
-            if distillation_config.n_gpus_per_node <= 0:
-                raise ValueError("config.distillation.n_gpus_per_node must be greater than 0")
-            if distillation_config.nnodes <= 0:
-                raise ValueError("config.distillation.nnodes must be greater than 0")
+            if distillation_config.enable_resource_pool:
+                if distillation_config.n_gpus_per_node <= 0:
+                    raise ValueError("config.distillation.n_gpus_per_node must be greater than 0")
+                if distillation_config.nnodes <= 0:
+                    raise ValueError("config.distillation.nnodes must be greater than 0")
 
-            teacher_pool = [distillation_config.n_gpus_per_node] * distillation_config.nnodes
-            resource_pool_spec["teacher_pool"] = teacher_pool
-            self.mapping[Role.TeacherModel] = "teacher_pool"
+                teacher_pool = [distillation_config.n_gpus_per_node] * distillation_config.nnodes
+                resource_pool_spec["teacher_pool"] = teacher_pool
+                self.mapping[Role.TeacherModel] = "teacher_pool"
+            else:
+                distillation_config.nnodes = config.trainer.nnodes
+                distillation_config.n_gpus_per_node = config.trainer.n_gpus_per_node
+                self.mapping[Role.TeacherModel] = "global_pool"
 
         self.resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=self.mapping)
 
@@ -1588,12 +1639,38 @@ class PPOTrainer(ABC):
     def _compute_advantage(self, batch: KVBatchMeta, metrics: dict) -> KVBatchMeta:
         """Compute the advantage of the batch."""
         fields = ["uid", "response_mask", "rm_scores", "rollout_log_probs", "old_log_probs", "ref_log_prob", "values"]
+        if self.config.algorithm.adv_estimator in (core_algos.AdvantageEstimator.SAMPO, "sampo"):
+            fields.append("extra_fields")
         data = tq.kv_batch_get(keys=batch.keys, partition_id=batch.partition_id, select_fields=fields)
 
         response_mask = data["response_mask"]
         data = DataProto(batch=data.to_padded_tensor())
         data.batch["token_level_scores"] = data.batch["rm_scores"]
-        data.non_tensor_batch["uid"] = np.array(data.batch.pop("uid").tolist(), dtype=object)
+        materialized_uids = data.batch.pop("uid").tolist()
+        if self.config.algorithm.adv_estimator in (core_algos.AdvantageEstimator.SAMPO, "sampo"):
+            # Preserve compatibility with native replay keys when an agent loop
+            # does not publish an explicit SAMPO prompt-group identity.
+            materialized_uids = [key.split("_", 1)[0] for key in batch.keys]
+        if "extra_fields" in data.batch:
+            extra_fields = data.batch.pop("extra_fields").tolist()
+            for field in SAMPO_ROLLOUT_METADATA_FIELDS:
+                values = [item[field] for item in extra_fields if isinstance(item, dict) and field in item]
+                if len(values) == len(extra_fields):
+                    value_array = np.empty(len(values), dtype=object)
+                    value_array[:] = values
+                    data.non_tensor_batch[field] = value_array
+        if "sampo_prompt_group_id" in data.non_tensor_batch:
+            materialized_uids = data.non_tensor_batch.pop("sampo_prompt_group_id").tolist()
+        if "sampo_turn_lengths" in data.non_tensor_batch:
+            turn_lengths = data.non_tensor_batch.pop("sampo_turn_lengths").tolist()
+            spans = [
+                _sampo_spans_from_lengths(lengths, mask)
+                for lengths, mask in zip(turn_lengths, data.batch["response_mask"], strict=True)
+            ]
+            span_array = np.empty(len(spans), dtype=object)
+            span_array[:] = spans
+            data.non_tensor_batch["sampo_turn_spans"] = span_array
+        data.non_tensor_batch["uid"] = np.array(materialized_uids, dtype=object)
 
         # 1. apply kl penalty to rewards
         if self.config.algorithm.use_kl_in_reward:
@@ -1627,6 +1704,7 @@ class PPOTrainer(ABC):
             norm_adv_by_std_in_grpo=self.config.algorithm.get("norm_adv_by_std_in_grpo", True),
             config=self.config.algorithm,
         )
+        metrics.update(data.meta_info.get("sampo_metrics", {}))
 
         # 4. write nested advantages and returns back to TransferQueue
         fields = ["advantages", "returns"]

@@ -25,11 +25,14 @@ with open(os.path.join(version_folder, "verl/version/version")) as f:
 
 install_requires = [
     "accelerate",
+    "cachetools",
     "codetiming",
     "datasets",
     "dill",
+    "fastapi",
     "hydra-core",
     "numpy>=2.0.0",
+    "orjson",
     "pandas",
     "peft",
     "pyarrow>=19.0.0",
@@ -37,10 +40,12 @@ install_requires = [
     "pylatexenc",
     "ray[default]>=2.41.0",
     "torchdata",
+    "transferqueue==0.1.8",
     "tensordict>=0.8.0,<=0.10.0,!=0.9.0",
     # 5.6.0 ships a broken flash-attention path (crashes on s_aux=None for
     # sink-less models); fixed in 5.6.1. See huggingface/transformers#45588.
-    "transformers>=5.5.3,!=5.6.0,<5.11",
+    "transformers>=5.5.3,!=5.6.0,<5.15.0",
+    "uvicorn",
     "wandb",
     "packaging>=20.0",
     "tensorboard",
@@ -51,8 +56,12 @@ TEST_REQUIRES = ["pytest", "pre-commit", "py-spy", "pytest-asyncio", "pytest-rer
 PRIME_REQUIRES = []
 GEO_REQUIRES = ["mathruler", "torchvision", "qwen_vl_utils"]
 GPU_REQUIRES = ["liger-kernel", "flash-attn"]
+QLORA_REQUIRES = ["bitsandbytes>=0.43.3"]
 MATH_REQUIRES = ["math-verify"]  # Add math-verify as an optional dependency
-VLLM_REQUIRES = ["tensordict>=0.8.0,<=0.10.0,!=0.9.0", "vllm>=0.18.0"]
+VLLM_REQUIRES = [
+    "tensordict>=0.8.0,<=0.10.0,!=0.9.0",
+    "vllm @ git+https://github.com/carbonteq-ai/vllm.git@7817d845727af570352622dc8d58f2d43c76d89d",
+]
 TRTLLM_REQUIRES = ["tensorrt-llm>=1.2.0rc6"]
 SGLANG_REQUIRES = [
     "tensordict>=0.8.0,<=0.10.0,!=0.9.0",
@@ -60,19 +69,17 @@ SGLANG_REQUIRES = [
     "torch==2.9.1",
 ]
 TRL_REQUIRES = ["trl<=0.9.6"]
-# Keep the legacy mbridge dependency available during its deprecation window.
-MCORE_REQUIRES = ["megatron-bridge", "mbridge"]
 
 extras_require = {
     "test": TEST_REQUIRES,
     "prime": PRIME_REQUIRES,
     "geo": GEO_REQUIRES,
     "gpu": GPU_REQUIRES,
+    "qlora": QLORA_REQUIRES,
     "math": MATH_REQUIRES,
     "vllm": VLLM_REQUIRES,
     "sglang": SGLANG_REQUIRES,
     "trl": TRL_REQUIRES,
-    "mcore": MCORE_REQUIRES,
     "trtllm": TRTLLM_REQUIRES,
 }
 

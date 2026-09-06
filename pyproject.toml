@@ -21,7 +21,18 @@ dynamic = ["version", "dependencies", "optional-dependencies", "authors", "urls"
 description = "verl: Volcano Engine Reinforcement Learning for LLM"
 license = {text = "Apache-2.0"}  # Changed from file to text format
 readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
+
+[tool.uv]
+environments = [
+    "sys_platform == 'linux' and python_version == '3.13'",
+]
+conflicts = [
+    [
+        { extra = "sglang" },
+        { extra = "vllm" },
+    ],
+]
 
 # -------------------------------
 # tool.ruff - Linting configuration
