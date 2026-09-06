@@ -2,7 +2,15 @@
 
 ## Status
 
-**Release candidate `0.9.0.post1`, unpublished.** This candidate integrates the
+**Release candidate `0.9.0.post1`, retained GitHub prerelease.**
+Release commit: `cec7e74c361bb973b641db8dfbb75a5544c33139`.
+Tag: `carbonteq-v0.9.0.post1`.
+Wheel SHA-256: `3d66ac6b78848ef591dd6e4be4d324fcac12c27247a05ad1c14dcf9fb370256e`.
+Source SHA-256: `6da77c10e5d37399c655b15e3ed78d520be2ca648ed763d43ccb7404dfe53d72`.
+Both hashes match GitHub asset digests. Sixty-three retained-feature tests pass
+against the installed wheel, independent of source-checkout imports.
+Development publisher: Posttrain Actions run `34006221953`; stable promotion
+and runtime-image qualification remain open. This candidate integrates the
 maintained consumer pin `808923d487aa2c524fda02cf5289110541b4221f` onto stable
 upstream v0.9.0. Branch: `codex/verl-0.9-retained-features`.
 Historical `0.9.0.dev2` candidate advanced the
