@@ -882,10 +882,11 @@ def compute_reinforce_plus_plus_outcome_advantage(
         running_return = 0
 
         for t in reversed(range(token_level_rewards.shape[1])):
-            running_return = token_level_rewards[:, t] + gamma * running_return
-            returns[:, t] = running_return
-            # Reset after EOS
-            running_return = running_return * response_mask[:, t]
+            candidate_return = token_level_rewards[:, t] + gamma * running_return
+            # Observations and padding are not actions: neither consume a
+            # discount step nor erase credit for preceding sampled tokens.
+            running_return = torch.where(response_mask[:, t].bool(), candidate_return, running_return)
+            returns[:, t] = torch.where(response_mask[:, t].bool(), running_return, 0.0)
 
         advantages = verl_F.masked_whiten(returns, response_mask)
         advantages = advantages * response_mask

@@ -45,6 +45,24 @@ after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
 
+### Unpublished REINFORCE++ observation-credit correction (2026-09-06)
+
+The isolated `codex/gdpo-capo-support` worktree starts at consumer pin
+`808923d487aa2c524fda02cf5289110541b4221f`, preserving the unrelated dirty
+`verl-upstream` checkout. It carries running returns through masked observations,
+following upstream fix `8a1bf6d5b080173e29834aca55ee8d47549b2ea6`. Discounting
+advances only on sampled actions; observation/padding returns are zero. This
+is REINFORCE++ only: CAPO must not acquire reward-to-go semantics.
+
+`tests/trainer/ppo/test_reinforce_observation_credit_on_cpu.py` has five cases
+covering observation-insertion invariance, non-unit gamma, float32/float64,
+padding, and masked reward exclusion. Together with `test_core_algos_on_cpu.py`,
+28 CPU tests pass. No model training, runtime rebuild, release publication, or
+consumer-pin change is implied. On a veRL v0.9.0 rebase, use its upstream fix
+and retain these regressions instead of duplicating the maintained delta.
+Consumer state: Posttrain `docs/tooling/verl/README.md` and
+`docs/plan/gdpo-capo-dual-backend-support.md`.
+
 ### Qwen 3.5 QLoRA and runtime counters
 
 The published branch includes the earlier candidate commits `05f83242` and
