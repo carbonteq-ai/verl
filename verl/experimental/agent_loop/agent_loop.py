@@ -78,6 +78,39 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 DEFAULT_ROUTING_CACHE_SIZE = 10000
 
 
+def validate_agent_loop_episode_capacity(
+    *,
+    num_workers: int,
+    max_concurrent_episodes: int | None,
+    max_concurrent_episodes_per_worker: int | None,
+) -> None:
+    """Validate an agent-loop concurrency contract before Ray workers start.
+
+    A manager can only promise a collection-wide limit when each worker has a
+    concrete local gate.  Reject advisory-only global limits instead of
+    silently exceeding them under an uneven Ray partition.
+    """
+    if num_workers <= 0:
+        raise ValueError("`agent.num_workers` must be a positive integer.")
+    if max_concurrent_episodes_per_worker is not None and max_concurrent_episodes_per_worker <= 0:
+        raise ValueError("`agent.max_concurrent_episodes_per_worker` must be a positive integer or null.")
+    if max_concurrent_episodes is not None and max_concurrent_episodes <= 0:
+        raise ValueError("`agent.max_concurrent_episodes` must be a positive integer or null.")
+    if max_concurrent_episodes is not None and max_concurrent_episodes_per_worker is None:
+        raise ValueError(
+            "`agent.max_concurrent_episodes` requires `agent.max_concurrent_episodes_per_worker` "
+            "so the ceiling can be enforced."
+        )
+    if (
+        max_concurrent_episodes is not None
+        and num_workers * max_concurrent_episodes_per_worker > max_concurrent_episodes
+    ):
+        raise ValueError(
+            "`agent.num_workers * agent.max_concurrent_episodes_per_worker` must not exceed "
+            "`agent.max_concurrent_episodes`."
+        )
+
+
 class AgentLoopMetrics(BaseModel):
     """Agent loop performance metrics."""
 
@@ -519,6 +552,10 @@ class AgentLoopWorker:
         rollout_config, model_config = config.actor_rollout_ref.rollout, config.actor_rollout_ref.model
         self.rollout_config: RolloutConfig = omega_conf_to_dataclass(rollout_config)
         self.model_config: HFModelConfig = omega_conf_to_dataclass(model_config)
+        per_worker_episode_limit = self.rollout_config.agent.max_concurrent_episodes_per_worker
+        self._episode_semaphore = (
+            asyncio.Semaphore(per_worker_episode_limit) if per_worker_episode_limit is not None else None
+        )
 
         self.dataset_cls = get_dataset_class(config.data)
         self.tokenizer = self.model_config.tokenizer
@@ -662,7 +699,9 @@ class AgentLoopWorker:
                 apply_greedy_sampling_params(sample_sampling_params)
             tasks.append(
                 asyncio.create_task(
-                    self._run_agent_loop(sample_sampling_params, trajectory_info[i], trace=trace_this_sample, **kwargs)
+                    self._run_agent_loop_with_capacity(
+                        sample_sampling_params, trajectory_info[i], trace=trace_this_sample, **kwargs
+                    )
                 )
             )
         outputs = await asyncio.gather(*tasks)
@@ -671,6 +710,21 @@ class AgentLoopWorker:
             outputs, input_non_tensor_batch=batch.non_tensor_batch, validate=batch.meta_info.get("validate", False)
         )
         return output
+
+    async def _run_agent_loop_with_capacity(
+        self,
+        sampling_params: dict[str, Any],
+        trajectory: dict[str, Any],
+        *,
+        agent_name: str,
+        trace: bool = True,
+        **kwargs,
+    ) -> _InternalAgentLoopOutput:
+        """Run one trajectory, respecting this worker's optional episode gate."""
+        if self._episode_semaphore is None:
+            return await self._run_agent_loop(sampling_params, trajectory, agent_name=agent_name, trace=trace, **kwargs)
+        async with self._episode_semaphore:
+            return await self._run_agent_loop(sampling_params, trajectory, agent_name=agent_name, trace=trace, **kwargs)
 
     async def _run_agent_loop(
         self,
@@ -1186,6 +1240,12 @@ class AgentLoopManager:
         self.llm_client = llm_client
         self.teacher_client = teacher_client
         self.reward_loop_worker_handles = reward_loop_worker_handles
+
+        validate_agent_loop_episode_capacity(
+            num_workers=self.rollout_config.agent.num_workers,
+            max_concurrent_episodes=self.rollout_config.agent.max_concurrent_episodes,
+            max_concurrent_episodes_per_worker=self.rollout_config.agent.max_concurrent_episodes_per_worker,
+        )
 
         if not hasattr(self, "agent_loop_workers_class"):
             self.agent_loop_workers_class = ray.remote(AgentLoopWorker)

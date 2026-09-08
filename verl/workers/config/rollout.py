@@ -71,6 +71,13 @@ class CustomAsyncServerConfig(BaseConfig):
 @dataclass
 class AgentLoopConfig(BaseConfig):
     num_workers: int = 8
+    # Bound concurrently active episodes in each agent-loop worker. ``None``
+    # preserves the historical unbounded fan-out within a worker.
+    max_concurrent_episodes_per_worker: Optional[int] = None
+    # Optional collection-wide ceiling. It is a validation contract: the
+    # configured worker count and per-worker ceiling must be able to prove the
+    # limit, rather than treating it as an advisory scheduler hint.
+    max_concurrent_episodes: Optional[int] = None
     default_agent_loop: str = "single_turn_agent"
     agent_loop_config_path: Optional[str] = None
     custom_async_server: CustomAsyncServerConfig = field(default_factory=CustomAsyncServerConfig)

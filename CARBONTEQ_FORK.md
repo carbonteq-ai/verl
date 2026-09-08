@@ -218,6 +218,22 @@ trainer suites.
 
 ### Report SAMPO hierarchical evidence
 
+### Bounded agent-loop episode admission
+
+The agent-loop manager already partitions a collection across Ray workers, but
+each worker previously started every locally assigned trajectory immediately.
+This fork adds opt-in `agent.max_concurrent_episodes_per_worker` and
+`agent.max_concurrent_episodes` configuration. The worker uses one
+`asyncio.Semaphore` shared by all rows in its collection. The manager validates
+that a collection-wide ceiling is paired with a local gate and that
+`num_workers * per_worker <= global`; it rejects advisory limits that could be
+exceeded by normal partitioning. Defaults remain unbounded for compatibility.
+
+This is rollout admission only: it does not change sampling, tensor packing,
+reward/advantage semantics, optimizer behavior, or Ray placement. Recoverable
+per-row outcomes and post-collection group admission remain separate pending
+work. CPU coverage is `tests/experimental/agent_loop/test_episode_capacity_on_cpu.py`.
+
 The SAMPO estimator emits batch-level episode-advantage, turn-advantage,
 anchor-group-size, and sparse-reward-projection metrics from the same
 hierarchical tensors used by the optimizer. Both the legacy and V1 trainer
