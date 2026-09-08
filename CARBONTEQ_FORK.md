@@ -269,6 +269,19 @@ model is still loaded by the rollout worker and is not resent on every step.
 Regression coverage:
 `tests/checkpoint_engine/test_global_steps_on_cpu.py::test_lora_adapter_is_staged_before_rollout_weights_wake`.
 
+### Qualify exact partial-rollout continuation evidence
+
+The native `FullyAsyncLLMServerClient` remains the owner of mid-generation
+abort and resume. A deterministic regression now proves that it resubmits the
+original prompt plus the retained generated prefix, reduces the remaining
+response budget, concatenates sampled token IDs and behavior log probabilities
+exactly once, and reports the minimum and maximum served `global_steps` across
+the resumed request. This is protocol qualification only; changed-weight GPU
+execution remains a consumer release gate.
+
+Regression coverage:
+`tests/workers/rollout/test_llm_server_response_length_cap_on_cpu.py::test_resume_preserves_exact_tokens_logprobs_and_policy_span`.
+
 ### Honor chunked entropy for dense FSDP inputs
 
 `verl/workers/engine/fsdp/transformer_impl.py` applies configured entropy
@@ -405,6 +418,7 @@ ruff check \
   tests/trainer/test_distillation_dense_teacher_logprobs_on_cpu.py \
   tests/trainer/test_distillation_resource_pool_on_cpu.py \
   tests/utils/reward_score/test_sandbox_on_cpu.py \
+  tests/workers/rollout/test_llm_server_response_length_cap_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
 pytest -q \
   tests/checkpoint_engine/test_global_steps_on_cpu.py \
@@ -415,6 +429,7 @@ pytest -q \
   tests/trainer/ppo/v1/test_trainer_base_on_cpu.py \
   tests/trainer/test_distillation_dense_teacher_logprobs_on_cpu.py \
   tests/utils/reward_score/test_sandbox_on_cpu.py \
+  tests/workers/rollout/test_llm_server_response_length_cap_on_cpu.py \
   tests/workers/rollout/test_spec_decode_counter_metrics_on_cpu.py
 git diff --check
 ```

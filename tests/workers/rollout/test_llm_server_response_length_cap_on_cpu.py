@@ -170,3 +170,54 @@ async def test_config_without_rollout_section_is_tolerated(server):
     output = await _generate(SimpleNamespace(), 136, {"temperature": 1.0})
 
     assert len(output.token_ids) > 0
+
+
+@pytest.mark.asyncio
+async def test_resume_preserves_exact_tokens_logprobs_and_policy_span(monkeypatch):
+    calls: list[tuple[list[int], dict[str, Any]]] = []
+    responses = iter(
+        (
+            TokenOutput(
+                token_ids=[20, 21],
+                log_probs=[-0.1, -0.2],
+                stop_reason="aborted",
+                extra_fields={"global_steps": 7},
+            ),
+            TokenOutput(
+                token_ids=[22, 23],
+                log_probs=[-0.3, -0.4],
+                stop_reason="stop",
+                extra_fields={"global_steps": 8},
+            ),
+        )
+    )
+
+    async def generate(_request_id, *, prompt_ids, sampling_params, **_kwargs):
+        calls.append((list(prompt_ids), dict(sampling_params)))
+        return next(responses)
+
+    monkeypatch.setattr(llm_server.LLMServerClient, "generate", generate)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(
+        llm_server.asyncio,
+        "sleep",
+        lambda _delay: real_sleep(0),
+    )
+
+    output = await _generate(
+        _config(),
+        2,
+        {"temperature": 0.0, "max_tokens": 4},
+    )
+
+    assert calls == [
+        ([0, 1], {"temperature": 0.0, "max_tokens": 4}),
+        ([0, 1, 20, 21], {"temperature": 0.0, "max_tokens": 2}),
+    ]
+    assert output.token_ids == [20, 21, 22, 23]
+    assert output.log_probs == [-0.1, -0.2, -0.3, -0.4]
+    assert output.extra_fields == {
+        "global_steps": 8,
+        "min_global_steps": 7,
+        "max_global_steps": 8,
+    }
