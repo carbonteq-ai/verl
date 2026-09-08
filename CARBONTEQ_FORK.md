@@ -228,6 +228,8 @@ This fork adds opt-in `agent.max_concurrent_episodes_per_worker` and
 that a collection-wide ceiling is paired with a local gate and that
 `num_workers * per_worker <= global`; it rejects advisory limits that could be
 exceeded by normal partitioning. Defaults remain unbounded for compatibility.
+`agent.num_cpus_per_worker` also makes each Ray actor's CPU scheduling
+reservation explicit; it does not claim operating-system affinity isolation.
 
 The V1 TransferQueue worker routes every session through the same gate. It
 already waits for every sibling session before publishing a terminal prompt

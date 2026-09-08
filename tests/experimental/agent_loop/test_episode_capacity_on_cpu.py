@@ -16,23 +16,26 @@ def test_episode_capacity_accepts_enforceable_contract() -> None:
 
 
 @pytest.mark.parametrize(
-    ("num_workers", "max_concurrent_episodes", "max_concurrent_episodes_per_worker"),
+    ("num_workers", "num_cpus_per_worker", "max_concurrent_episodes", "max_concurrent_episodes_per_worker"),
     [
-        (0, None, None),
-        (4, 0, 8),
-        (4, 32, 0),
-        (4, 32, None),
-        (4, 31, 8),
+        (0, 1.0, None, None),
+        (4, 0.0, 32, 8),
+        (4, 1.0, 0, 8),
+        (4, 1.0, 32, 0),
+        (4, 1.0, 32, None),
+        (4, 1.0, 31, 8),
     ],
 )
 def test_episode_capacity_rejects_unenforceable_contract(
     num_workers: int,
+    num_cpus_per_worker: float,
     max_concurrent_episodes: int | None,
     max_concurrent_episodes_per_worker: int | None,
 ) -> None:
     with pytest.raises(ValueError):
         validate_agent_loop_episode_capacity(
             num_workers=num_workers,
+            num_cpus_per_worker=num_cpus_per_worker,
             max_concurrent_episodes=max_concurrent_episodes,
             max_concurrent_episodes_per_worker=max_concurrent_episodes_per_worker,
         )

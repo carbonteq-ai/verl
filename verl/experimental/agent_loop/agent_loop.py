@@ -81,6 +81,7 @@ DEFAULT_ROUTING_CACHE_SIZE = 10000
 def validate_agent_loop_episode_capacity(
     *,
     num_workers: int,
+    num_cpus_per_worker: float = 1.0,
     max_concurrent_episodes: int | None,
     max_concurrent_episodes_per_worker: int | None,
 ) -> None:
@@ -92,6 +93,12 @@ def validate_agent_loop_episode_capacity(
     """
     if num_workers <= 0:
         raise ValueError("`agent.num_workers` must be a positive integer.")
+    if (
+        isinstance(num_cpus_per_worker, bool)
+        or not isinstance(num_cpus_per_worker, int | float)
+        or num_cpus_per_worker <= 0
+    ):
+        raise ValueError("`agent.num_cpus_per_worker` must be a positive number.")
     if max_concurrent_episodes_per_worker is not None and max_concurrent_episodes_per_worker <= 0:
         raise ValueError("`agent.max_concurrent_episodes_per_worker` must be a positive integer or null.")
     if max_concurrent_episodes is not None and max_concurrent_episodes <= 0:
@@ -1243,6 +1250,7 @@ class AgentLoopManager:
 
         validate_agent_loop_episode_capacity(
             num_workers=self.rollout_config.agent.num_workers,
+            num_cpus_per_worker=self.rollout_config.agent.num_cpus_per_worker,
             max_concurrent_episodes=self.rollout_config.agent.max_concurrent_episodes,
             max_concurrent_episodes_per_worker=self.rollout_config.agent.max_concurrent_episodes_per_worker,
         )
@@ -1269,6 +1277,7 @@ class AgentLoopManager:
             self.agent_loop_workers.append(
                 self.agent_loop_workers_class.options(
                     name=f"agent_loop_worker_{i}" + f"_{uuid4().hex[:8]}",
+                    num_cpus=self.rollout_config.agent.num_cpus_per_worker,
                     scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
                         node_id=node_id, soft=True
                     ),

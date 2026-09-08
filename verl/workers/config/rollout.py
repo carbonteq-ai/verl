@@ -71,6 +71,9 @@ class CustomAsyncServerConfig(BaseConfig):
 @dataclass
 class AgentLoopConfig(BaseConfig):
     num_workers: int = 8
+    # Ray scheduling reservation for each agent-loop worker. This is resource
+    # accounting, not operating-system CPU affinity.
+    num_cpus_per_worker: float = 1.0
     # Bound concurrently active episodes in each agent-loop worker. ``None``
     # preserves the historical unbounded fan-out within a worker.
     max_concurrent_episodes_per_worker: Optional[int] = None
