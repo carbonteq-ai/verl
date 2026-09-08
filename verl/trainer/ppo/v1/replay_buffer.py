@@ -128,6 +128,8 @@ class ReplayBuffer:
         max_num_gen_batches (int): Maximum complete candidate batches generated for one Sync DAPO
             optimizer batch. Non-positive values leave the replacement budget unbounded.
         sync_refill_failed_groups (bool): Whether sync sampling replaces failed groups with no trajectories.
+        refill_all_failed_groups (bool): Whether any failed group is replaced, including groups with some
+            materializable sibling trajectories.
     """
 
     def __init__(

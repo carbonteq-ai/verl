@@ -14,7 +14,7 @@
 
 import asyncio
 
-from verl.trainer.ppo.v1.agent_loop_tq import _settle_session_tasks
+from verl.trainer.ppo.v1.agent_loop_tq import _run_session_with_capacity, _settle_session_tasks
 
 
 def test_settle_session_tasks_waits_for_siblings_after_failure():
@@ -35,5 +35,41 @@ def test_settle_session_tasks_waits_for_siblings_after_failure():
         assert all(task.done() for task in tasks)
         assert len(errors) == 1
         assert isinstance(errors[0], RuntimeError)
+
+    asyncio.run(run())
+
+
+def test_transfer_queue_session_uses_worker_episode_gate():
+    class FakeWorker:
+        def __init__(self):
+            self.calls = []
+
+        async def _run_agent_loop_with_capacity(self, sampling_params, **kwargs):
+            self.calls.append((sampling_params, kwargs))
+            return "completed"
+
+    async def run():
+        worker = FakeWorker()
+        result = await _run_session_with_capacity(
+            worker,
+            {"temperature": 0.7},
+            {"step": 3},
+            trace=False,
+            session_id=2,
+            prompt={"uid": "group-a", "example_id": "example-a"},
+        )
+        assert result == "completed"
+        assert worker.calls == [
+            (
+                {"temperature": 0.7},
+                {
+                    "trajectory": {"step": 3},
+                    "trace": False,
+                    "session_id": 2,
+                    "uid": "group-a",
+                    "example_id": "example-a",
+                },
+            )
+        ]
 
     asyncio.run(run())

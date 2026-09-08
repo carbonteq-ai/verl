@@ -49,6 +49,25 @@ async def _settle_session_tasks(tasks: list[asyncio.Task[Any]]) -> list[BaseExce
     return [result for result in results if isinstance(result, BaseException)]
 
 
+async def _run_session_with_capacity(
+    worker: AgentLoopWorker,
+    sampling_params: dict[str, Any],
+    trajectory: dict[str, Any],
+    *,
+    trace: bool,
+    session_id: int,
+    prompt: dict[str, Any],
+) -> Any:
+    """Route V1 TransferQueue sessions through the native worker episode gate."""
+    return await worker._run_agent_loop_with_capacity(
+        sampling_params,
+        trajectory=trajectory,
+        trace=trace,
+        session_id=session_id,
+        **prompt,
+    )
+
+
 @ray.remote
 class AgentLoopWorkerTQ(AgentLoopWorker):
     def __init__(self, *args, **kwargs):
@@ -122,8 +141,13 @@ class AgentLoopWorkerTQ(AgentLoopWorker):
             tasks = []
             for i in range(n):
                 task = asyncio.create_task(
-                    self._run_agent_loop(
-                        run_sampling_params, trajectory=trajectory, trace=trace, session_id=i, **prompt
+                    _run_session_with_capacity(
+                        self,
+                        run_sampling_params,
+                        trajectory,
+                        trace=trace,
+                        session_id=i,
+                        prompt=prompt,
                     )
                 )
                 tasks.append(task)

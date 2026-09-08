@@ -125,6 +125,16 @@ def test_builtin_sync_failure_refill_forces_single_prompt_generation():
     assert sampler.gen_batch_size == 1
 
 
+def test_configured_complete_group_refill_forces_single_prompt_generation():
+    trainer = _trainer_with_filter_groups({"enable": False})
+    trainer.config.trainer.v1.sampler.refill_all_failed_groups = True
+
+    sampler = trainer._build_replay_buffer()
+
+    assert sampler.refill_all_failed_groups is True
+    assert sampler.gen_batch_size == 1
+
+
 def test_sync_failure_refill_overrides_dataloader_generation_batch_size():
     trainer = _trainer_with_filter_groups({"enable": False})
     trainer.config.trainer.v1.sampler.sync_refill_failed_groups = True

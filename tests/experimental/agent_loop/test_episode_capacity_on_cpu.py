@@ -38,27 +38,29 @@ def test_episode_capacity_rejects_unenforceable_contract(
         )
 
 
-@pytest.mark.asyncio
-async def test_worker_episode_gate_limits_concurrent_agent_loops() -> None:
-    worker = object.__new__(AgentLoopWorker)
-    worker._episode_semaphore = asyncio.Semaphore(2)
-    active = 0
-    peak_active = 0
+def test_worker_episode_gate_limits_concurrent_agent_loops() -> None:
+    async def run() -> None:
+        worker = object.__new__(AgentLoopWorker)
+        worker._episode_semaphore = asyncio.Semaphore(2)
+        active = 0
+        peak_active = 0
 
-    async def run_agent_loop(*args, **kwargs):
-        nonlocal active, peak_active
-        del args, kwargs
-        active += 1
-        peak_active = max(peak_active, active)
-        await asyncio.sleep(0)
-        active -= 1
-        return object()
+        async def run_agent_loop(*args, **kwargs):
+            nonlocal active, peak_active
+            del args, kwargs
+            active += 1
+            peak_active = max(peak_active, active)
+            await asyncio.sleep(0)
+            active -= 1
+            return object()
 
-    worker._run_agent_loop = run_agent_loop
-    await asyncio.gather(
-        *[
-            worker._run_agent_loop_with_capacity({}, {}, agent_name="test", trace=False)
-            for _ in range(5)
-        ]
-    )
-    assert peak_active == 2
+        worker._run_agent_loop = run_agent_loop
+        await asyncio.gather(
+            *[
+                worker._run_agent_loop_with_capacity({}, {}, agent_name="test", trace=False)
+                for _ in range(5)
+            ]
+        )
+        assert peak_active == 2
+
+    asyncio.run(run())

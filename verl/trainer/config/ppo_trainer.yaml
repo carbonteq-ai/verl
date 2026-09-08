@@ -274,6 +274,11 @@ trainer:
       # Whether sync trainers replace failed groups that have no trajectories
       sync_refill_failed_groups: False
 
+      # Whether every terminal group containing a failed session is replaced.
+      # This preserves complete group-relative batches instead of materializing
+      # partial groups when some sibling trajectories succeeded.
+      refill_all_failed_groups: False
+
       # Custom sampler config
       custom_sampler:
 

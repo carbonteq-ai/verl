@@ -229,10 +229,22 @@ that a collection-wide ceiling is paired with a local gate and that
 `num_workers * per_worker <= global`; it rejects advisory limits that could be
 exceeded by normal partitioning. Defaults remain unbounded for compatibility.
 
-This is rollout admission only: it does not change sampling, tensor packing,
-reward/advantage semantics, optimizer behavior, or Ray placement. Recoverable
-per-row outcomes and post-collection group admission remain separate pending
-work. CPU coverage is `tests/experimental/agent_loop/test_episode_capacity_on_cpu.py`.
+The V1 TransferQueue worker routes every session through the same gate. It
+already waits for every sibling session before publishing a terminal prompt
+status, so a session exception becomes a failed prompt group instead of a
+batch-wide exception. `trainer.v1.sampler.refill_all_failed_groups` now lets a
+consumer require complete groups: any group with a failed session is evicted
+and replaced even if other sibling trajectories are materializable. SAMPO's
+existing complete-group default remains intact; other algorithms opt in.
+
+This changes rollout admission and terminal-group handling only. It does not
+change sampling, tensor packing, reward/advantage equations, optimizer
+behavior, or Ray placement. The legacy non-TransferQueue manager still lacks
+typed recoverable row outcomes. CPU coverage is in
+`tests/experimental/agent_loop/test_episode_capacity_on_cpu.py`,
+`tests/trainer/ppo/v1/test_agent_loop_tq_on_cpu.py`,
+`tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py`, and
+`tests/trainer/ppo/v1/test_trainer_base_on_cpu.py`.
 
 The SAMPO estimator emits batch-level episode-advantage, turn-advantage,
 anchor-group-size, and sparse-reward-projection metrics from the same
