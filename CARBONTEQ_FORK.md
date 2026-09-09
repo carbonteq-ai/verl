@@ -6,9 +6,14 @@
 runtime with bounded concurrent agent-loop episodes, explicit Ray CPU-resource
 reservations, complete-group preservation in the V1 TransferQueue path, and
 partial-rollout policy-version provenance. Branch:
-`codex/verl-rollout-execution`. Its immutable release commit, tag, artifact
-hashes, and development-channel readback are recorded only after the
-build-once publication gates pass.
+`codex/verl-rollout-execution`. Its immutable release commit is
+`98742d3e9507318ba0b5d4944034deb7db1ec84b`, tagged
+`carbonteq-v0.9.0.post2`. Wheel SHA-256:
+`adeef5700a7f56a10beaef5304f6a5626b015c45334d516d2330243bcad174f5`;
+sdist SHA-256:
+`0c1c1ac543a93d2ff5ba50c4394c4b9838ad90615c981422ce22df4693224a0a`.
+Posttrain retained-asset publisher `34335257738` passed exact-byte
+development-channel readback and clean installation.
 
 Post1 integrated the maintained consumer pin
 `808923d487aa2c524fda02cf5289110541b4221f` onto stable upstream v0.9.0 at
