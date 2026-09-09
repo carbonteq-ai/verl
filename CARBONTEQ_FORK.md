@@ -2,9 +2,22 @@
 
 ## Status
 
-**Release candidate `0.9.0.post1`, unpublished.** This candidate integrates the
-maintained consumer pin `808923d487aa2c524fda02cf5289110541b4221f` onto stable
-upstream v0.9.0. Branch: `codex/verl-0.9-retained-features`.
+**Release candidate `0.9.0.post2`.** This candidate extends the published post1
+runtime with bounded concurrent agent-loop episodes, explicit Ray CPU-resource
+reservations, complete-group preservation in the V1 TransferQueue path, and
+partial-rollout policy-version provenance. Branch:
+`codex/verl-rollout-execution`. Its immutable release commit, tag, artifact
+hashes, and development-channel readback are recorded only after the
+build-once publication gates pass.
+
+Post1 integrated the maintained consumer pin
+`808923d487aa2c524fda02cf5289110541b4221f` onto stable upstream v0.9.0 at
+`cec7e74c361bb973b641db8dfbb75a5544c33139`. It was released as
+`carbonteq-v0.9.0.post1` and published to `carbonteq/dev` by Posttrain Actions
+run `34006221953`. Wheel SHA-256:
+`3d66ac6b78848ef591dd6e4be4d324fcac12c27247a05ad1c14dcf9fb370256e`;
+sdist SHA-256:
+`6da77c10e5d37399c655b15e3ed78d520be2ca648ed763d43ccb7404dfe53d72`.
 Historical `0.9.0.dev2` candidate advanced the
 published runtime, SAMPO, and dense-distillation lineage at
 `c3f49b9117b882fa888e25e4a771461e13167848` without changing its supported
