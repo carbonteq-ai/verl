@@ -2,13 +2,17 @@
 
 ## Status
 
-**Release candidate `0.9.0.post2`.** This candidate extends the published post1
-runtime with bounded concurrent agent-loop episodes, explicit Ray CPU-resource
-reservations, complete-group preservation in the V1 TransferQueue path, and
-partial-rollout policy-version provenance. Branch:
-`codex/verl-rollout-execution`. Its immutable release commit is
-`98742d3e9507318ba0b5d4944034deb7db1ec84b`, tagged
-`carbonteq-v0.9.0.post2`. Wheel SHA-256:
+**Release candidate `0.9.0.post3`.** Post3 retains the post2 runtime and updates
+the `vllm` extra to the exact CarbonTeq Uno source-overlay commit
+`37706e7d920abc97c705ffecee0919d64ef31485`, released as
+`carbonteq-v0.26.1.dev1`. This dependency update does not claim native K2
+training support in veRL. Branch: `codex/verl-rollout-execution`.
+
+Post2 extends the published post1 runtime with bounded concurrent agent-loop
+episodes, explicit Ray CPU-resource reservations, complete-group preservation
+in the V1 TransferQueue path, and partial-rollout policy-version provenance.
+Its immutable release commit is `98742d3e9507318ba0b5d4944034deb7db1ec84b`,
+tagged `carbonteq-v0.9.0.post2`. Wheel SHA-256:
 `adeef5700a7f56a10beaef5304f6a5626b015c45334d516d2330243bcad174f5`;
 sdist SHA-256:
 `0c1c1ac543a93d2ff5ba50c4394c4b9838ad90615c981422ce22df4693224a0a`.
@@ -212,9 +216,11 @@ one replay-buffer prompt group.
 
 The runtime delta adds `orjson`, permits supported Transformers releases below
 5.15 while excluding known-broken 5.6.0, and selects CarbonTeq vLLM commit
-`7817d845727af570352622dc8d58f2d43c76d89d` in the `vllm` extra. That vLLM
-commit is based on upstream 0.25.1 and carries the bounded TurboQuant
-cache-reshape correction documented in the vLLM fork's `CARBONTEQ_FORK.md`.
+`37706e7d920abc97c705ffecee0919d64ef31485` in the `vllm` extra. That vLLM
+commit is based on upstream `75c71390d5b399f5397a9166920fc45902f99f14`
+(`v0.26.1rc0` development line) and carries both the earlier bounded
+TurboQuant cache correction and native Uno proposer documented in the vLLM
+fork's `CARBONTEQ_FORK.md`.
 
 The framework's veRL runtime remains a separately locked Python environment.
 Its release lock independently selects the same immutable vLLM commit; the

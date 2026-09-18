@@ -60,7 +60,7 @@ QLORA_REQUIRES = ["bitsandbytes>=0.43.3"]
 MATH_REQUIRES = ["math-verify"]  # Add math-verify as an optional dependency
 VLLM_REQUIRES = [
     "tensordict>=0.8.0,<=0.10.0,!=0.9.0",
-    "vllm @ git+https://github.com/carbonteq-ai/vllm.git@7817d845727af570352622dc8d58f2d43c76d89d",
+    "vllm @ git+https://github.com/carbonteq-ai/vllm.git@37706e7d920abc97c705ffecee0919d64ef31485",
 ]
 TRTLLM_REQUIRES = ["tensorrt-llm>=1.2.0rc6"]
 SGLANG_REQUIRES = [
