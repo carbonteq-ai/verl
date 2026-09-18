@@ -8,6 +8,15 @@ the `vllm` extra to the exact CarbonTeq Uno source-overlay commit
 `carbonteq-v0.26.1.dev1`. This dependency update does not claim native K2
 training support in veRL. Branch: `codex/verl-rollout-execution`.
 
+Its immutable release commit is
+`18338a0efbd6f103378d2861f4a078ad243db455`, tagged
+`carbonteq-v0.9.0.post3`. Wheel SHA-256:
+`55db59d956084c27941a787952c1d66fcdbd4f7c1d71c9ddd1f20c283af7186f`;
+sdist SHA-256:
+`75caad0671f3f3f70241b049ff6b3fb937cee34a4bdcadd74230b1c46bc4bb31`.
+Posttrain retained-asset publisher `35292934219` passed exact-byte development
+readback and clean installation.
+
 Post2 extends the published post1 runtime with bounded concurrent agent-loop
 episodes, explicit Ray CPU-resource reservations, complete-group preservation
 in the V1 TransferQueue path, and partial-rollout policy-version provenance.
