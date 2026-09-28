@@ -27,9 +27,13 @@ sdists have identical members. Retained wheel
 `63efd613e15f0011e840fadbb67e7d053353aa7b31437c84555e0261331faee5`;
 retained sdist `verl-0.9.0.post6.tar.gz` SHA-256:
 `c7a00ceb1858011799ec22f8d82d66f07632e1eb4ecb26e95bb207c4e1abeb1a`.
-`twine check` passes for both. The branch push, tag push, GitHub release and
-the Posttrain retained-asset publisher (`publish-verl-internal.yml`) are
-pending.
+`twine check` passes for both. Published: GitHub release
+<https://github.com/carbonteq-ai/verl/releases/tag/carbonteq-v0.9.0.post6>,
+Posttrain retained-asset publisher run
+<https://github.com/carbonteq-ai/posttrain/actions/runs/36474625071>;
+`carbonteq/dev` serves both hashes. Posttrain branch
+`codex/verl-vortex-active-sampling` pins it for the `online-rl-verl-py313` kind
+(release 0.4.13).
 
 **Release candidate `0.9.0.post5`.** Post5 is the post4 release commit
 (`54124edf`) plus the token-clip policy loss and the unclipped k3 KL estimator
