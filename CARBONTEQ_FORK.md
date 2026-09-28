@@ -2,6 +2,16 @@
 
 ## Status
 
+**Release candidate `0.9.0.post7`.** Post7 is the post6 publication receipt
+(`100a0a88`) plus one fix, "LoRA tensor sync keeps constituent module names"
+under "Maintained delta": veRL's in-memory LoRA sync to vLLM renamed stacked
+constituents (`q_proj`/`k_proj`/`v_proj`, LFM2's `w1`/`w3`) onto one module, so
+any LoRA on a packed vLLM layer failed at the first weight sync. It blocks
+LFM2.5 on veRL (Posttrain `docs/plan/verl-vortex-port.md`, Phase 4). No
+dependency change. Branch: `codex/vortex-lora-sync`. The wheel and sdist
+SHA-256 values of the retained assets are recorded in the receipt commit that
+follows the tag.
+
 **Release candidate `0.9.0.post6`.** Post6 is the post5 asset receipt
 (`9c10bd1a`) plus the VORTEX and SAMPO deltas of Posttrain's
 `docs/plan/verl-vortex-port.md` (phases 2 to 5), each marked "(post6)" under
@@ -150,7 +160,7 @@ after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
 
-### LoRA tensor sync keeps constituent module names (candidate)
+### LoRA tensor sync keeps constituent module names (post7)
 
 `VLLMHijack`'s `_load_adapter` (`verl/utils/vllm/utils.py`), which loads the
 actor's LoRA tensors into vLLM (`TensorLoRARequest`), named LoRA modules with
