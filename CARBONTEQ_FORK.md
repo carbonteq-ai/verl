@@ -15,8 +15,21 @@ group or batch scope, row exclusion, failed-group admission retries, the
 (`algorithm.filter_groups.candidate_batches`), plus an LFM2 LoRA export
 regression test. It changes no dependency. Every new behaviour is opt-in: with
 the new keys at their defaults the trainer behaves as post5. Branch:
-`codex/vortex-active-sampling`. The wheel and sdist SHA-256 values of the
-retained assets are recorded in the receipt commit that follows the tag.
+`codex/vortex-active-sampling`.
+
+Its immutable release commit is
+`1badbebd22aee7af5b85185760275f697af3a073`, tagged `carbonteq-v0.9.0.post6`
+(annotated tag object `3a7eb765060cf2d691114cb8cfefd2c5a84da180`). Built from
+two clean clones with `SOURCE_DATE_EPOCH` set to the commit time
+(`1790624464`): the wheel is byte-identical across both builds and the two
+sdists have identical members. Retained wheel
+`verl-0.9.0.post6-py3-none-any.whl` SHA-256:
+`63efd613e15f0011e840fadbb67e7d053353aa7b31437c84555e0261331faee5`;
+retained sdist `verl-0.9.0.post6.tar.gz` SHA-256:
+`c7a00ceb1858011799ec22f8d82d66f07632e1eb4ecb26e95bb207c4e1abeb1a`.
+`twine check` passes for both. The branch push, tag push, GitHub release and
+the Posttrain retained-asset publisher (`publish-verl-internal.yml`) are
+pending.
 
 **Release candidate `0.9.0.post5`.** Post5 is the post4 release commit
 (`54124edf`) plus the token-clip policy loss and the unclipped k3 KL estimator
