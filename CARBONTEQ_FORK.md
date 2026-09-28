@@ -11,9 +11,19 @@ selects `policy_loss.loss_mode=token_clip` and `kl_loss_type=k3_unclipped` for
 GDPO and CAPO, and post4 registers neither, so those runs failed at the first
 actor update. It also provides the OLMo 3 objective for Posttrain's VORTEX
 port (`docs/plan/verl-vortex-port.md`). Branch: `codex/vortex`, tagged
-`carbonteq-v0.9.0.post5` at this release commit. The wheel and sdist SHA-256
-values of the retained assets are recorded in the receipt commit that follows
-the tag.
+`carbonteq-v0.9.0.post5` at this release commit.
+
+Its immutable release commit is
+`9fd6e7a31396ba33a29233cc869ab05b0a9e5a80`, tagged `carbonteq-v0.9.0.post5`
+(annotated tag object `3945e01a4e3fabad02b123713201e757109bb18c`). Built from
+two clean clones with `SOURCE_DATE_EPOCH` set to the commit time: the wheel is
+byte-identical across both builds and the two sdists have identical members.
+Retained wheel `verl-0.9.0.post5-py3-none-any.whl` SHA-256:
+`c16a2ad14d1bd60947229bde41fae99955a4fcb7ab3f892020ef0c24e35dd158`;
+retained sdist `verl-0.9.0.post5.tar.gz` SHA-256:
+`3c9e17c2d04a798eae1836e8dd82f64480bcbe4d8ee94441028625b2da71df57`.
+`twine check` passes for both. The GitHub release and the Posttrain
+retained-asset publisher (`publish-verl-internal.yml`) are pending.
 
 **Release candidate `0.9.0.post4`.** Its immutable release commit is
 `54124edfb8d0b73694696400cf07a76a14d9be65`, tagged `carbonteq-v0.9.0.post4`;
