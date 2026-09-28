@@ -483,7 +483,7 @@ def compute_sampo_outcome_advantage(
                 {
                     "sampo/episode_advantage_abs_mean": float(episode_advantages.abs().mean().item()),
                     "sampo/turn_advantage_abs_mean": float(turn_abs.mean().item()),
-                    "sampo/turn_advantage_informative_fraction": float((turn_abs > 1e-9).float().mean().item()),
+                    "sampo/turn_advantage_informative_fraction": int((turn_abs > 1e-9).sum().item()) / turn_abs.numel(),
                     "sampo/singleton_anchor_fraction": sum(size == 1 for size in member_sizes) / len(member_sizes),
                 }
             )
