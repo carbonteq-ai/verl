@@ -316,3 +316,19 @@ def test_buffer_numbers_rounds_and_reports_every_finished_group_in_dispatch_orde
         keys = list(tq.kv_list(partition_id=partition_id).get(partition_id, {}).keys())
         if keys:
             tq.kv_clear(keys=keys, partition_id=partition_id)
+
+
+def test_buffer_ignores_non_finite_values_like_trl_nan_rewards(tq_init, partition_id):
+    nan = float("nan")
+    # Group 0 keeps spread only through an excluded (NaN) trajectory; group 1 has spread among finite values.
+    dispatcher = _Dispatcher(partition_id, [[0.0, 0.0, nan], [0.0, 1.0, nan], [1.0, nan, nan], [0.5, 0.25, 0.5]])
+    buffer = _buffer(dispatcher, active_max_rounds=3)
+    try:
+        batch, _ = buffer.sample(global_steps=1, partition_id=partition_id, batch_size=2)
+        # Group 2 has one finite value (no spread), so a third round is needed.
+        assert dispatcher.calls == [2, 1, 1]
+        assert {key.split("_")[0] for key in batch.keys} == {dispatcher.uids[1], dispatcher.uids[3]}
+    finally:
+        keys = list(tq.kv_list(partition_id=partition_id).get(partition_id, {}).keys())
+        if keys:
+            tq.kv_clear(keys=keys, partition_id=partition_id)

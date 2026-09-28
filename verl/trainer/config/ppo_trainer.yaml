@@ -109,6 +109,15 @@ algorithm:
     # Maximum Sync DAPO prompt batches concurrently in flight, measured in train-batch units
     max_inflight_gen_batches: 1
 
+  # CarbonTeq: epsilon added to the GRPO std divisor (null keeps 1e-6)
+  grpo_std_epsilon: null
+
+  # CarbonTeq: "group" (per prompt group) or "batch" (whole batch) reward std for GRPO scaling
+  grpo_std_scope: group
+
+  # CarbonTeq: drop rows flagged exclude_from_loss by the agent loop from GRPO stats and the loss
+  exclude_flagged_rows: False
+
   # Round-based active sampling (TRL GRPO semantics): refill only the missing prompt groups
   active_sampling:
 
@@ -297,6 +306,10 @@ trainer:
 
       # Whether sync trainers replace failed groups that have no trajectories
       sync_refill_failed_groups: False
+
+      # CarbonTeq: TRL group admission. A failed group is re-run with the same prompt until attempted
+      # this many times, then dropped; the loss is normalized over the remaining rows (0 disables).
+      failed_group_attempts: 0
 
       # Whether every terminal group containing a failed session is replaced.
       # This preserves complete group-relative batches instead of materializing

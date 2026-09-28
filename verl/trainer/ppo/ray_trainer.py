@@ -189,6 +189,19 @@ def compute_spec_decode_metrics(
     }
 
 
+def _grpo_scaling_kwargs(data: DataProto, config: Optional[AlgoConfig]) -> dict:
+    """CarbonTeq: TRL-equivalent GRPO scaling options (epsilon, std scope, excluded rows)."""
+    kwargs: dict = {}
+    if config is not None:
+        if config.get("grpo_std_epsilon", None) is not None:
+            kwargs["epsilon"] = float(config.get("grpo_std_epsilon"))
+        if config.get("grpo_std_scope", None) is not None:
+            kwargs["std_scope"] = str(config.get("grpo_std_scope"))
+    if "exclude_from_group_stats" in data.non_tensor_batch:
+        kwargs["excluded"] = data.non_tensor_batch["exclude_from_group_stats"]
+    return kwargs
+
+
 def compute_advantage(
     data: DataProto,
     adv_estimator: AdvantageEstimator,
@@ -247,6 +260,7 @@ def compute_advantage(
             response_mask=grpo_calculation_mask,
             index=data.non_tensor_batch["uid"],
             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+            **_grpo_scaling_kwargs(data, config),
         )
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns

@@ -277,3 +277,112 @@ def test_sampo_turn_lengths_align_to_materialized_response_mask():
     mask = torch.tensor([1, 1, 0, 1, 1, 1], dtype=torch.int64)
 
     assert _sampo_spans_from_lengths([2, 3], mask) == [[0, 2], [3, 6]]
+
+
+def test_flagged_rows_leave_grpo_group_statistics_and_the_loss():
+    trainer = _StubTrainer.__new__(_StubTrainer)
+    trainer.config = OmegaConf.create(
+        {
+            "algorithm": {
+                "adv_estimator": "grpo",
+                "gamma": 1.0,
+                "lam": 1.0,
+                "use_kl_in_reward": False,
+                "norm_adv_by_std_in_grpo": True,
+                "grpo_std_epsilon": 1e-4,
+                "exclude_flagged_rows": True,
+            },
+            "actor_rollout_ref": {"rollout": {"n": 3}},
+        }
+    )
+    keys = ["g_0_0", "g_1_0", "g_2_0"]
+    batch = KVBatchMeta(partition_id="train", keys=keys, tags=[{}, {}, {}])
+
+    def nested(rows):
+        return torch.nested.as_nested_tensor(rows, layout=torch.jagged)
+
+    transfer = TensorDict(
+        {
+            "uid": NonTensorStack.from_list([NonTensorData("g")] * 3),
+            "response_mask": nested([torch.ones(2, dtype=torch.int64)] * 3),
+            "rm_scores": nested([torch.tensor([0.0, 1.0]), torch.tensor([0.0, 0.0]), torch.tensor([0.0, 5.0])]),
+            "extra_fields": NonTensorStack.from_list(
+                [
+                    NonTensorData({"exclude_from_loss": False}),
+                    NonTensorData({"exclude_from_loss": False}),
+                    NonTensorData({"exclude_from_loss": True}),
+                ]
+            ),
+        },
+        batch_size=[3],
+    )
+    loss_mask = TensorDict({"loss_mask": nested([torch.ones(4, dtype=torch.int64)] * 3)}, batch_size=[3])
+    puts = []
+
+    def fake_get(keys, partition_id, select_fields):
+        return loss_mask if select_fields == ["loss_mask"] else transfer
+
+    def fake_put(keys, partition_id, fields):
+        puts.append(fields)
+        return batch
+
+    metrics: dict = {}
+    with (
+        patch("verl.trainer.ppo.v1.trainer_base.tq.kv_batch_get", side_effect=fake_get),
+        patch("verl.trainer.ppo.v1.trainer_base.tq.kv_batch_put", side_effect=fake_put),
+    ):
+        trainer._compute_advantage(batch, metrics=metrics)
+
+    # TRL: the excluded reward is NaN, so the group is {1, 0}: mean 0.5, unbiased std sqrt(0.5).
+    expected = 0.5 / (0.5**0.5 + 1e-4)
+    advantages = puts[-1]["advantages"]
+    assert torch.allclose(advantages[0], torch.tensor([expected, expected]))
+    assert torch.allclose(advantages[1], torch.tensor([-expected, -expected]))
+    assert torch.equal(advantages[2], torch.zeros(2))
+    assert torch.equal(puts[-1]["response_mask"][2], torch.zeros(2, dtype=torch.int64))
+    written_loss_mask = next(put["loss_mask"] for put in puts if "loss_mask" in put.keys())
+    assert torch.equal(written_loss_mask[2], torch.zeros(4, dtype=torch.int64))
+    assert torch.equal(written_loss_mask[0], torch.ones(4, dtype=torch.int64))
+    assert metrics["training/excluded_rows"] == 1
+
+
+def test_grpo_batch_scope_divides_by_the_whole_batch_std():
+    from verl.trainer.ppo.core_algos import compute_grpo_outcome_advantage
+
+    rewards = torch.zeros(4, 2)
+    rewards[:, -1] = torch.tensor([1.0, 0.0, 3.0, 1.0])
+    index = np.array(["a", "a", "b", "b"], dtype=object)
+    advantages, _ = compute_grpo_outcome_advantage(rewards, torch.ones(4, 2), index, epsilon=1e-4, std_scope="batch")
+    std = torch.tensor([1.0, 0.0, 3.0, 1.0]).std()
+    expected = torch.tensor([0.5, -0.5, 1.0, -1.0]) / (std + 1e-4)
+    assert torch.allclose(advantages[:, 0], expected)
+
+
+def test_admitted_partial_batches_normalize_the_loss_over_their_real_rows():
+    trainer = _StubTrainer.__new__(_StubTrainer)
+    trainer.config = OmegaConf.create(
+        {
+            "actor_rollout_ref": {
+                "actor": {
+                    "ppo_mini_batch_size": 2,
+                    "calculate_entropy": False,
+                    "entropy_coeff": 0.0,
+                    "ppo_epochs": 1,
+                    "data_loader_seed": 1,
+                    "shuffle": False,
+                },
+                "rollout": {"n": 2, "temperature": 1.0},
+            },
+            "trainer": {"v1": {"sampler": {"failed_group_attempts": 2}}},
+        }
+    )
+    trainer.distillation_config = None
+    trainer.actor_rollout_wg = MagicMock()
+    trainer.actor_rollout_wg.update_actor.return_value = {"metrics": {"mfu": 0.0}}
+    tags = [{}, {}, {"is_padding": True}, {"is_padding": True}]
+    batch = KVBatchMeta(partition_id="train", keys=["a_0_0", "a_1_0", "p_0_0", "p_1_0"], tags=tags)
+
+    trainer._update_actor(batch, metrics={})
+
+    assert batch.extra_info["global_batch_size"] == 2  # one dropped group: 2 of 4 rows are real
+    assert batch.extra_info["mini_batch_size"] == 4

@@ -225,6 +225,9 @@ class PPOTrainer(ABC):
                 sync_refill_failed_groups=sync_refill_failed_groups,
                 refill_all_failed_groups=refill_all_failed_groups,
             )
+            attempts = int(sampler_config.get("failed_group_attempts", 0) or 0)
+            if attempts and sampler_cls is not ActiveSamplingReplayBuffer:
+                replay_buffer_kwargs.update(retry_fn=self._retry_prompt, failed_group_attempts=attempts)
             if sampler_cls is ActiveSamplingReplayBuffer:
                 assert active_sampling is not None
                 self._check_active_sampling_capacity(active_sampling)
@@ -238,6 +241,10 @@ class PPOTrainer(ABC):
                     active_oversample_refill=int(active_sampling.get("oversample_refill", 0)),
                     active_reward_std_epsilon=float(active_sampling.get("reward_std_epsilon", 0.0)),
                     active_metric=str(active_sampling.get("metric", "seq_reward")),
+                    active_observe_metric=str(
+                        (self.config.data.get("prompt_selector", None) or {}).get("metric", None)
+                        or active_sampling.get("metric", "seq_reward")
+                    ),
                 )
             elif sampler_cls is ReplayBuffer:
                 filter_groups = self.config.algorithm.get("filter_groups", None)
@@ -608,6 +615,7 @@ class PPOTrainer(ABC):
         sample_batch_size = train_batch_size // self.parameter_sync_step
         # Groups that failed or were never observed must not carry selector indices into the next step.
         self._selected_prompt_indices = {}
+        self._dispatched_prompts = {}
 
         # Active sampling dispatches its own rounds from inside the replay buffer.
         if not isinstance(self.replay_buffer, ActiveSamplingReplayBuffer):
@@ -1484,8 +1492,22 @@ class PPOTrainer(ABC):
         tu.assign_non_tensor_data(batch, "global_steps", self.global_steps)
         return batch
 
+    def _retry_prompt(self, failed_uid: str) -> str:
+        """Dispatch the failed group's prompt again under a new uid (TRL's admission retry)."""
+        row = self._dispatched_prompts.pop(failed_uid)
+        retried = str(uuid.uuid4())
+        row["uid"] = [retried]
+        tu.assign_non_tensor_data(row, "global_steps", self.global_steps)
+        self._submit_batch_to_rollout(row)
+        return retried
+
     def _submit_batch_to_rollout(self, batch: TensorDict) -> int:
         """Register prompts in TransferQueue and dispatch them for generation."""
+        if self.trainer_mode == "sync" and int(self.config.trainer.v1.sampler.get("failed_group_attempts", 0) or 0):
+            if not hasattr(self, "_dispatched_prompts"):
+                self._dispatched_prompts = {}
+            for position, uid in enumerate(batch["uid"]):
+                self._dispatched_prompts[str(uid)] = tu.index_select_tensor_dict(batch, [position])
         tags = [{"is_prompt": True, "status": "pending", "global_steps": self.global_steps} for _ in range(len(batch))]
         if self.trainer_mode != "sync":
             tq.kv_batch_put(
@@ -1779,7 +1801,8 @@ class PPOTrainer(ABC):
     def _compute_advantage(self, batch: KVBatchMeta, metrics: dict) -> KVBatchMeta:
         """Compute the advantage of the batch."""
         fields = ["uid", "response_mask", "rm_scores", "rollout_log_probs", "old_log_probs", "ref_log_prob", "values"]
-        if self.config.algorithm.adv_estimator in (core_algos.AdvantageEstimator.SAMPO, "sampo"):
+        exclude_flagged = bool(self.config.algorithm.get("exclude_flagged_rows", False))
+        if self.config.algorithm.adv_estimator in (core_algos.AdvantageEstimator.SAMPO, "sampo") or exclude_flagged:
             fields.append("extra_fields")
         data = tq.kv_batch_get(keys=batch.keys, partition_id=batch.partition_id, select_fields=fields)
 
@@ -1791,8 +1814,18 @@ class PPOTrainer(ABC):
             # Preserve compatibility with native replay keys when an agent loop
             # does not publish an explicit SAMPO prompt-group identity.
             materialized_uids = [key.split("_", 1)[0] for key in batch.keys]
+        excluded_rows = None
         if "extra_fields" in data.batch:
             extra_fields = data.batch.pop("extra_fields").tolist()
+            if exclude_flagged:
+                excluded_rows = np.array(
+                    [bool(isinstance(item, dict) and item.get("exclude_from_loss", False)) for item in extra_fields],
+                    dtype=bool,
+                )
+                # SAMPO centres every trajectory (TRL computes its advantages before masking);
+                # GRPO drops excluded rows from its group statistics.
+                if self.config.algorithm.adv_estimator not in (core_algos.AdvantageEstimator.SAMPO, "sampo"):
+                    data.non_tensor_batch["exclude_from_group_stats"] = excluded_rows
             for field in SAMPO_ROLLOUT_METADATA_FIELDS:
                 values = [item[field] for item in extra_fields if isinstance(item, dict) and field in item]
                 if len(values) == len(extra_fields):
@@ -1846,11 +1879,33 @@ class PPOTrainer(ABC):
         )
         metrics.update(data.meta_info.get("sampo_metrics", {}))
 
+        # 3b. excluded rows (TRL's masked truncated completions) carry no loss or advantage
+        if excluded_rows is not None and excluded_rows.any():
+            rows = torch.as_tensor(excluded_rows)
+            data.batch["response_mask"][rows] = 0
+            data.batch["advantages"][rows] = 0
+            data.batch["returns"][rows] = 0
+            if "rollout_is_weights" in data.batch:
+                data.batch["rollout_is_weights"][rows] = 0
+            loss_mask = tq.kv_batch_get(keys=batch.keys, partition_id=batch.partition_id, select_fields=["loss_mask"])[
+                "loss_mask"
+            ]
+            loss_mask = torch.nested.as_nested_tensor(
+                [row * 0 if excluded else row for row, excluded in zip(loss_mask.unbind(), excluded_rows, strict=True)],
+                layout=torch.jagged,
+            )
+            tq.kv_batch_put(
+                keys=batch.keys,
+                partition_id=batch.partition_id,
+                fields=TensorDict({"loss_mask": loss_mask}, batch_size=len(batch)),
+            )
+            metrics["training/excluded_rows"] = int(excluded_rows.sum())
+
         # 4. write nested advantages and returns back to TransferQueue
         fields = ["advantages", "returns"]
         if self.config.algorithm.use_kl_in_reward:
             fields.append("token_level_rewards")
-        if rollout_correction:
+        if rollout_correction or (excluded_rows is not None and excluded_rows.any()):
             fields.append("response_mask")
             if "rollout_is_weights" in data.batch:
                 fields.append("rollout_is_weights")
@@ -1907,11 +1962,18 @@ class PPOTrainer(ABC):
                 and not distillation_loss_cfg.use_task_rewards
                 and not distillation_loss_cfg.use_policy_gradient
             )
+        global_batch_size = ppo_mini_batch_size
+        if int(self.config.trainer.v1.sampler.get("failed_group_attempts", 0) or 0):
+            # TRL rescales the loss of an admitted partial batch to its retained rows
+            # (``admission_loss_scale``); synthetic padding rows must not dilute it.
+            real_rows = sum(not tag.get("is_padding", False) for tag in batch.tags)
+            if real_rows < ppo_mini_batch_size:
+                global_batch_size = real_rows
         extra_info = {
             "calculate_entropy": calculate_entropy,
             "distillation_use_topk": distillation_use_topk,
             "distillation_only": distillation_only,
-            "global_batch_size": ppo_mini_batch_size,
+            "global_batch_size": global_batch_size,
             "mini_batch_size": ppo_mini_batch_size,
             "epochs": self.config.actor_rollout_ref.actor.ppo_epochs,
             "seed": self.config.actor_rollout_ref.actor.data_loader_seed,

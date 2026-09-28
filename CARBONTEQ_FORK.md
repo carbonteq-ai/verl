@@ -125,6 +125,42 @@ after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
 
+### TRL-equivalent settings: sampler correction bounds, GRPO scaling, row exclusion, admission, linear LR (candidate)
+
+Posttrain selects TRL's GRPO semantics for every online-RL setting; these deltas
+let veRL reproduce the ones upstream cannot express.
+
+- Sampler correction (`verl/trainer/ppo/rollout_corr_helper.py`,
+  `RolloutCorrectionConfig`): `rollout_is_clip_min` clamps truncated weights from
+  below (TRL `vllm_importance_sampling_clip_min`), and
+  `rollout_is_log_ratio_bound` (default 20, `null` disables) removes the
+  log-ratio safety clamp so weights equal TRL's `exp(log ratio)`. Mask modes use
+  the existing "lower_upper" IcePop threshold.
+- GRPO scaling (`compute_grpo_outcome_advantage`, `AlgoConfig`):
+  `grpo_std_epsilon` (TRL adds 1e-4), `grpo_std_scope` `group` or `batch`
+  (TRL `scale_rewards="batch"`), and rows listed in
+  `non_tensor_batch["exclude_from_group_stats"]` leave group statistics exactly
+  as TRL's NaN rewards do (nan-mean, unbiased nan-std, undefined advantages 0).
+- Row exclusion (`algorithm.exclude_flagged_rows`, V1 `_compute_advantage`):
+  rows whose agent-loop `extra_fields` carry `exclude_from_loss=True` (TRL's
+  masked truncated completions) are dropped from GRPO statistics, and after
+  advantages their response mask, loss mask, advantages and correction weights
+  are zeroed. SAMPO keeps them in its centring, as TRL's SAMPO path does. The
+  DAPO filter and active sampling ignore non-finite metric values (NaN marks an
+  excluded trajectory) and need two finite values with spread.
+- Group admission (`trainer.v1.sampler.failed_group_attempts`, sync
+  `ReplayBuffer`): a failed group is re-dispatched with its prompt until it has
+  been attempted that many times, then dropped; plain GRPO trains the remaining
+  groups with the seq-mean normalized over real rows (TRL's
+  `admission_loss_scale`), DAPO refills a dropped group like a filtered one.
+- Linear LR (`get_linear_schedule_with_warmup`, FSDP optimizer): Hugging Face's
+  `lr_scheduler_type="linear"`.
+
+CPU regression coverage: `tests/trainer/ppo/v1/test_trainer_base_on_cpu.py`,
+`tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py`,
+`tests/trainer/ppo/v1/test_active_sampling_on_cpu.py`,
+`tests/utils/test_linear_lr_schedule_on_cpu.py`.
+
 ### Sequence-ratio clip loss and SAMPO hierarchy evidence (candidate)
 
 TRL's GRPO trainer with `importance_sampling_level="sequence"` (the objective

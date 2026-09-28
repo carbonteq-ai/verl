@@ -1182,3 +1182,94 @@ def test_overlapping_async_eviction_reasons_refill_once(tq_init, partition_id):
         assert metrics["validation/filter_groups/evicted_samples"] == 1
     finally:
         _clear_partition(partition_id)
+
+
+class _Retrier:
+    """Re-run a failed group with a scripted terminal status per attempt."""
+
+    def __init__(self, partition_id: str, outcomes: list[str]):
+        self.partition_id = partition_id
+        self.outcomes = list(outcomes)
+        self.retried: list[str] = []
+
+    def __call__(self, failed_uid: str) -> str:
+        self.retried.append(failed_uid)
+        status = self.outcomes.pop(0)
+        spec = PromptSpec(uid=_uid(), status=status, sessions=0 if status == "failure" else 2, global_steps=1)
+        _produce(self.partition_id, [spec]).join_and_check()
+        return spec.uid
+
+
+def _admission_rb(retrier, attempts: int) -> ReplayBuffer:
+    return ReplayBuffer(
+        trainer_mode="sync",
+        trainer_config={},
+        max_off_policy_threshold=8,
+        max_off_policy_strategy="drop",
+        sampler_kwargs={},
+        poll_interval=POLL_INTERVAL,
+        refill_fn=lambda count: count,
+        train_batch_size=2,
+        gen_batch_size=1,
+        retry_fn=retrier,
+        failed_group_attempts=attempts,
+    )
+
+
+def test_admission_retries_a_failed_group_with_its_prompt(tq_init, partition_id):
+    healthy = PromptSpec(uid=_uid(), status="finished", sessions=2, global_steps=1)
+    failed = PromptSpec(uid=_uid(), status="failure", sessions=0, global_steps=1)
+    _produce(partition_id, [healthy, failed]).join_and_check()
+    retrier = _Retrier(partition_id, ["failure", "finished"])
+    try:
+        batch, metrics = _admission_rb(retrier, attempts=3).sample(
+            global_steps=1, partition_id=partition_id, batch_size=2
+        )
+        assert len(retrier.retried) == 2 and retrier.retried[0] == failed.uid
+        assert len(_uids_of(batch.keys)) == 2 and healthy.uid in _uids_of(batch.keys)
+        assert metrics["validation/admission/retried_groups"] == 2
+        assert metrics["validation/admission/dropped_groups"] == 0
+    finally:
+        _clear_partition(partition_id)
+
+
+def test_admission_drops_a_group_after_its_attempts_and_trains_the_rest(tq_init, partition_id):
+    healthy = PromptSpec(uid=_uid(), status="finished", sessions=2, global_steps=1)
+    failed = PromptSpec(uid=_uid(), status="failure", sessions=0, global_steps=1)
+    _produce(partition_id, [healthy, failed]).join_and_check()
+    retrier = _Retrier(partition_id, ["failure"])
+    try:
+        batch, metrics = _admission_rb(retrier, attempts=2).sample(
+            global_steps=1, partition_id=partition_id, batch_size=2
+        )
+        assert _uids_of(batch.keys) == {healthy.uid}
+        assert metrics["validation/admission/dropped_groups"] == 1
+    finally:
+        _clear_partition(partition_id)
+
+
+def test_admission_fails_when_every_group_is_dropped(tq_init, partition_id):
+    failed = [PromptSpec(uid=_uid(), status="failure", sessions=0, global_steps=1) for _ in range(2)]
+    _produce(partition_id, failed).join_and_check()
+    try:
+        with pytest.raises(RuntimeError, match="retained no complete groups"):
+            _admission_rb(_Retrier(partition_id, []), attempts=1).sample(
+                global_steps=1, partition_id=partition_id, batch_size=2
+            )
+    finally:
+        _clear_partition(partition_id)
+
+
+def test_dapo_treats_non_finite_metric_values_as_excluded(tq_init, partition_id):
+    nan = float("nan")
+    one_finite = PromptSpec(uid=_uid(), status="finished", sessions=2, rewards=[nan, 1.0])
+    spread = PromptSpec(uid=_uid(), status="finished", sessions=3, rewards=[nan, 0.0, 1.0])
+    _produce(partition_id, [one_finite, spread]).join_and_check()
+    rb = _make_rb(filter_groups_metric="acc", refill_fn=FakeRefiller(partition_id, 1, sessions=2, rewards=[0.0, 1.0]))
+    try:
+        filtered, _ = (
+            rb._dapo_filtered_keys(partition_id) if rb._sync_metadata_from_transfer_queue() is None else ({}, {})
+        )
+        assert one_finite.uid in filtered and spread.uid not in filtered
+    finally:
+        _clear_partition(partition_id)

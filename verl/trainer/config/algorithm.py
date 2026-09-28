@@ -230,6 +230,10 @@ class RolloutCorrectionConfig(BaseConfig):
     rollout_rs_threshold: Optional[str | float] = None
     bypass_mode: bool = False
     loss_type: str = "ppo_clip"
+    # CarbonTeq: truncated IS also clamps weights from below (TRL's vllm_importance_sampling_clip_min).
+    rollout_is_clip_min: Optional[float] = None
+    # CarbonTeq: |log ratio| cap applied before exponentiation; null exponentiates exactly as TRL does.
+    rollout_is_log_ratio_bound: Optional[float] = 20.0
 
     @classmethod
     def decoupled_token_is(cls, threshold: float = 2.0) -> "RolloutCorrectionConfig":
@@ -710,6 +714,13 @@ class AlgoConfig(BaseConfig):
     pf_ppo: dict[str, Any] = field(default_factory=dict)
     filter_groups: Optional[FilterGroupsConfig] = None
     active_sampling: Optional[ActiveSamplingConfig] = None
+    # CarbonTeq: TRL-equivalent GRPO scaling. grpo_std_epsilon is added to the std (TRL uses 1e-4);
+    # grpo_std_scope "batch" divides by the whole batch's reward std.
+    grpo_std_epsilon: Optional[float] = None
+    grpo_std_scope: str = "group"
+    # CarbonTeq: rows whose agent-loop extra_fields carry exclude_from_loss=True are dropped from GRPO
+    # group statistics and from the loss after advantages are computed (TRL's mask_truncated_completions).
+    exclude_flagged_rows: bool = False
     sampo: SampoConfig = field(default_factory=SampoConfig)
     # Rollout Correction: corrects off-policy issues (policy mismatch, model staleness, distribution shifts)
     # Set to None to disable, use RolloutCorrectionConfig presets (e.g., .tis(), .mis()), or pass dict

@@ -148,6 +148,8 @@ class ReplayBuffer:
         max_num_gen_batches: int = 0,
         sync_refill_failed_groups: bool = False,
         refill_all_failed_groups: bool = False,
+        retry_fn=None,
+        failed_group_attempts: int = 0,
     ):
         self.trainer_mode = trainer_mode
         self.trainer_config = trainer_config
@@ -163,6 +165,14 @@ class ReplayBuffer:
         self.max_num_gen_batches = max_num_gen_batches
         self.sync_refill_failed_groups = sync_refill_failed_groups
         self.refill_all_failed_groups = refill_all_failed_groups
+        # CarbonTeq: TRL's group admission. A failed group is re-run with the same prompt until it has
+        # been attempted ``failed_group_attempts`` times, then dropped (0 disables).
+        self.retry_fn = retry_fn
+        self.failed_group_attempts = failed_group_attempts
+        if failed_group_attempts and (retry_fn is None or trainer_mode != "sync"):
+            raise ValueError("failed-group admission retries need sync mode and a retry_fn")
+        if failed_group_attempts and (sync_refill_failed_groups or refill_all_failed_groups):
+            raise ValueError("failed-group admission retries replace failed-group refill")
 
         assert isinstance(self.max_off_policy_threshold, int) and self.max_off_policy_threshold > 0, (
             f"Invalid max off policy threshold: {self.max_off_policy_threshold}, must be an integer greater than 0"
@@ -302,7 +312,11 @@ class ReplayBuffer:
 
         for uid in new_finished_uids:
             values = metrics_by_uid[uid]
-            classification_cache[uid] = float(values[0]) if len(values) > 1 and float(np.std(values)) == 0.0 else None
+            # Non-finite values mark trajectories excluded from group statistics (TRL's masked
+            # truncated completions): a group needs two finite values with spread to be kept.
+            finite = [value for value in values if np.isfinite(value)]
+            no_signal = len(values) > 1 and (len(finite) < 2 or float(np.std(finite)) == 0.0)
+            classification_cache[uid] = (float(finite[0]) if finite else float("nan")) if no_signal else None
 
         filtered_rewards = {uid: reward for uid, reward in classification_cache.items() if reward is not None}
         return set(filtered_rewards), Counter(filtered_rewards.values())
@@ -413,6 +427,20 @@ class ReplayBuffer:
             return now
         return last_debug_time
 
+    def _admit_failed_groups(self, partition_id: str, state: dict) -> None:
+        """Retry each failed group with its prompt, or drop it once its attempts are spent (TRL admission)."""
+        for uid in sorted(self.failure_keys[partition_id]):
+            origin = state["origin"].get(uid, uid)
+            attempts = state["attempts"].get(origin, 1)
+            if attempts < self.failed_group_attempts:
+                retried = self.retry_fn(uid)
+                state["origin"][retried] = origin
+                state["attempts"][origin] = attempts + 1
+                state["retried"] += 1
+            else:
+                state["dropped"].add(origin)
+            self._clear_groups(partition_id, {uid})
+
     @SkipManager.annotate_tq(role="rollout_tq", phase="sample")
     def sample(self, global_steps: int, partition_id: str, batch_size: int) -> tuple[KVBatchMeta, dict]:
         """Sample a batch using synchronous rollout semantics.
@@ -445,11 +473,26 @@ class ReplayBuffer:
             if self.max_num_gen_batches > 0:
                 max_candidate_prompts = self.max_num_gen_batches * self.train_batch_size
 
+        admission = {"origin": {}, "attempts": {}, "dropped": set(), "retried": 0}
+        admitting = partition_id != "val" and self.failed_group_attempts > 0
+        requested_batch_size = batch_size
         while True:
             # Eviction, gating, and selection below must all use this snapshot.
             self._sync_metadata_from_transfer_queue()
             if dapo_enabled and candidate_prompts_generated is None:
                 candidate_prompts_generated = len(self.prompt_global_steps[partition_id])
+            if admitting and self.failure_keys[partition_id]:
+                dropped_before = len(admission["dropped"])
+                self._admit_failed_groups(partition_id, admission)
+                newly_dropped = len(admission["dropped"]) - dropped_before
+                if dapo_enabled:
+                    # A dropped group is an unretained candidate; refill it like a filtered group.
+                    refill_credit += newly_dropped
+                else:
+                    batch_size = requested_batch_size - len(admission["dropped"])
+                    if batch_size == 0:
+                        raise RuntimeError("rollout admission retained no complete groups")
+                continue
 
             eviction_reasons = self._terminal_eviction_reasons(global_steps, partition_id)
             failed_count = len(eviction_reasons[2])
@@ -523,6 +566,10 @@ class ReplayBuffer:
 
             last_debug_time = self._wait_for_next_poll(partition_id, last_debug_time)
 
+        if admitting:
+            prefix = self._metrics_prefix(partition_id)
+            eviction_metrics[f"{prefix}/admission/retried_groups"] = admission["retried"]
+            eviction_metrics[f"{prefix}/admission/dropped_groups"] = len(admission["dropped"])
         selected_uids = set(selected_prompt_uids)
         if partition_id != "val" and not any(key.split("_")[0] in selected_uids for key in partition_snapshot):
             message = "Sync replay buffer selected terminal groups with no materializable trajectories."
@@ -762,6 +809,7 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
         active_oversample_refill: int = 0,
         active_reward_std_epsilon: float = 0.0,
         active_metric: str = "seq_reward",
+        active_observe_metric: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -786,12 +834,15 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
         self.active_oversample_refill = active_oversample_refill
         self.active_reward_std_epsilon = active_reward_std_epsilon
         self.active_metric = active_metric
+        self.active_observe_metric = active_observe_metric or active_metric
         self.group_size: int | None = None
 
     def _keeps_group(self, values: list[float]) -> bool:
-        if len(values) < 2:
+        # Non-finite values are trajectories excluded from group statistics (TRL's NaN rewards).
+        finite = [value for value in values if np.isfinite(value)]
+        if len(finite) < 2:
             return False
-        return float(np.std(values, ddof=1)) > self.active_reward_std_epsilon
+        return float(np.std(finite, ddof=1)) > self.active_reward_std_epsilon
 
     def _classify_round(self, partition_id: str, round_uids: list[str]) -> list[str]:
         """Return the kept uids of a finished round in dispatch order and evict the others.
@@ -802,18 +853,21 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
         finished = [uid for uid in round_uids if uid in self.finished_keys[partition_id]]
         trajectory_keys = [key for key in self.partitions[partition_id] if key.split("_")[0] in set(finished)]
         values: dict[str, list[float]] = defaultdict(list)
+        observed: dict[str, list[float]] = defaultdict(list)
         if trajectory_keys:
             data = tq.kv_batch_get(keys=trajectory_keys, partition_id=partition_id, select_fields=["extra_fields"])
             for key, extra_fields in zip(trajectory_keys, list(data["extra_fields"]), strict=True):
                 extra_fields = getattr(extra_fields, "data", extra_fields)
                 info = extra_fields.get("reward_extra_info", {}) if isinstance(extra_fields, dict) else {}
-                if self.active_metric not in info:
-                    raise RuntimeError(
-                        f"Finished group {key.split('_')[0]} is missing active-sampling metric {self.active_metric!r}"
-                    )
+                for metric in {self.active_metric, self.active_observe_metric}:
+                    if metric not in info:
+                        raise RuntimeError(
+                            f"Finished group {key.split('_')[0]} is missing active-sampling metric {metric!r}"
+                        )
                 values[key.split("_")[0]].append(float(info[self.active_metric]))
+                observed[key.split("_")[0]].append(float(info[self.active_observe_metric]))
         if self.observe_fn is not None:
-            self.observe_fn([(uid, list(values[uid])) for uid in finished])
+            self.observe_fn([(uid, list(observed[uid])) for uid in finished])
         kept = [uid for uid in finished if self._keeps_group(values[uid])]
         sizes = {len(values[uid]) for uid in kept}
         if len(sizes) > 1 or (self.group_size is not None and sizes and sizes != {self.group_size}):

@@ -26,3 +26,9 @@ loss_type: ppo_clip
 
 # Batch normalize IS weights: false = raw weights, true = normalize to mean=1.0
 rollout_is_batch_normalize: false
+
+# CarbonTeq: truncated IS also clamps weights from below at this value (null: no lower clamp)
+rollout_is_clip_min: null
+
+# CarbonTeq: |log ratio| cap applied before exponentiation (null: exponentiate the exact ratio)
+rollout_is_log_ratio_bound: 20.0

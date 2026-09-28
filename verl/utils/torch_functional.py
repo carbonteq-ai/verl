@@ -790,6 +790,27 @@ def get_constant_schedule_with_warmup(
     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
 
+def get_linear_schedule_with_warmup(
+    optimizer: Optimizer,
+    num_warmup_steps: int,
+    num_training_steps: int,
+    last_epoch: int = -1,
+):
+    """Linear warmup from 0 to the initial LR, then linear decay to 0 at ``num_training_steps``.
+
+    The same multiplier as ``transformers.get_linear_schedule_with_warmup`` (Hugging Face's
+    ``lr_scheduler_type="linear"``), so a run that selects a linear schedule gets the same learning
+    rate at every optimizer step on both trainers.
+    """
+
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        return max(0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps)))
+
+    return LambdaLR(optimizer, lr_lambda, last_epoch)
+
+
 def prepare_decoder_attention_mask(attention_mask, input_shape, inputs_embeds):
     # create causal mask
     # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]

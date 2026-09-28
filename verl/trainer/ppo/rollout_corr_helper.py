@@ -525,6 +525,8 @@ def compute_rollout_correction_weights(
     rollout_is: str = "token",
     rollout_is_threshold: str | float = 2.0,
     rollout_is_batch_normalize: bool = False,
+    rollout_is_clip_min: Optional[float] = None,
+    rollout_is_log_ratio_bound: Optional[float] = SAFETY_BOUND,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Compute importance sampling weights to correct for off-policy distribution shifts.
 
@@ -567,12 +569,15 @@ def compute_rollout_correction_weights(
         raise ValueError(f"Invalid rollout_is: {rollout_is}. Must be one of {valid_is_levels}.")
     rollout_is_threshold_upper, rollout_is_threshold_lower = _parse_rollout_is_threshold(rollout_is_threshold)
     use_icepop = rollout_is_threshold_lower is not None
+    if rollout_is_clip_min is not None and (use_icepop or not rollout_is_clip_min > 0):
+        raise ValueError("rollout_is_clip_min needs a positive value and a single-value (truncating) threshold")
+    bound = math.inf if rollout_is_log_ratio_bound is None else float(rollout_is_log_ratio_bound)
 
     # Compute IS weights from log ratio (handles different aggregation levels)
     if rollout_is == "token":
         # Per-token IS weight: exp(log(π_train/π_rollout)) with safety clamp
         log_ratio_for_metrics: torch.Tensor = log_ratio
-        log_ratio_safe: torch.Tensor = torch.clamp(log_ratio, min=-SAFETY_BOUND, max=SAFETY_BOUND)
+        log_ratio_safe: torch.Tensor = torch.clamp(log_ratio, min=-bound, max=bound)
         raw_rollout_is_weights: torch.Tensor = torch.exp(log_ratio_safe)
 
     elif rollout_is == "sequence":
@@ -582,7 +587,7 @@ def compute_rollout_correction_weights(
         )  # Shape: (batch_size, 1)
         log_ratio_for_metrics = log_ratio_sum
 
-        log_ratio_sum_safe: torch.Tensor = torch.clamp(log_ratio_sum, min=-SAFETY_BOUND, max=SAFETY_BOUND)
+        log_ratio_sum_safe: torch.Tensor = torch.clamp(log_ratio_sum, min=-bound, max=bound)
         raw_rollout_is_weights = torch.exp(log_ratio_sum_safe).expand_as(log_ratio)  # Broadcast to sequence length
 
     else:
@@ -593,7 +598,9 @@ def compute_rollout_correction_weights(
 
     # Apply TIS for a single upper bound and IcePop for a lower_upper string.
     if not use_icepop:
-        rollout_is_weights = raw_rollout_is_weights.clamp(max=rollout_is_threshold_upper)
+        rollout_is_weights = raw_rollout_is_weights.clamp(min=rollout_is_clip_min, max=rollout_is_threshold_upper)
+        # Clamping from below must not lift padding tokens off zero.
+        rollout_is_weights = rollout_is_weights * response_mask
     else:
         assert rollout_is_threshold_lower is not None
         token_kept_mask = (raw_rollout_is_weights >= rollout_is_threshold_lower) & (
@@ -792,6 +799,8 @@ def compute_rollout_correction_and_rejection_mask(
     rollout_is_batch_normalize: bool = False,
     rollout_rs: Optional[str] = None,
     rollout_rs_threshold: Optional[str | float] = None,
+    rollout_is_clip_min: Optional[float] = None,
+    rollout_is_log_ratio_bound: Optional[float] = SAFETY_BOUND,
 ) -> tuple[Optional[DataProto], torch.Tensor, dict[str, float]]:
     """Unified interface for computing IS weights and rejection masks.
 
@@ -858,6 +867,8 @@ def compute_rollout_correction_and_rejection_mask(
             rollout_is=rollout_is,
             rollout_is_threshold=rollout_is_threshold,
             rollout_is_batch_normalize=rollout_is_batch_normalize,
+            rollout_is_clip_min=rollout_is_clip_min,
+            rollout_is_log_ratio_bound=rollout_is_log_ratio_bound,
         )
         metrics.update(is_metrics)
 
@@ -1055,6 +1066,8 @@ def compute_rollout_correction_and_add_to_batch(
         rollout_is_batch_normalize=rollout_is_batch_normalize,
         rollout_rs=rollout_rs,
         rollout_rs_threshold=rollout_rs_threshold,
+        rollout_is_clip_min=rollout_corr_config.get("rollout_is_clip_min", None),
+        rollout_is_log_ratio_bound=rollout_corr_config.get("rollout_is_log_ratio_bound", SAFETY_BOUND),
     )
 
     # ALWAYS update response_mask with rejection applied

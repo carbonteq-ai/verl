@@ -274,6 +274,8 @@ def compute_grpo_outcome_advantage(
     epsilon: float = 1e-6,
     norm_adv_by_std_in_grpo: bool = True,
     config: Optional[AlgoConfig] = None,
+    std_scope: str = "group",
+    excluded: Optional[np.ndarray] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Compute advantage for GRPO, operating only on Outcome reward
@@ -304,6 +306,17 @@ def compute_grpo_outcome_advantage(
             shape is (bs, response_length)
     """
     scores = token_level_rewards.sum(dim=-1)
+    if std_scope != "group" or excluded is not None:
+        advantages = _grpo_advantages_like_trl(
+            scores,
+            index,
+            excluded=excluded,
+            normalize=norm_adv_by_std_in_grpo,
+            std_scope=std_scope,
+            epsilon=epsilon,
+        )
+        advantages = advantages.unsqueeze(-1) * response_mask
+        return advantages, advantages
 
     id2score = defaultdict(list)
     id2mean = {}
@@ -331,6 +344,50 @@ def compute_grpo_outcome_advantage(
         scores = scores.unsqueeze(-1) * response_mask
 
     return scores, scores
+
+
+def _grpo_advantages_like_trl(
+    scores: torch.Tensor,
+    index: np.ndarray,
+    *,
+    excluded: Optional[np.ndarray],
+    normalize: bool,
+    std_scope: str,
+    epsilon: float,
+) -> torch.Tensor:
+    """TRL GRPOTrainer's advantages: excluded rows are NaN rewards (TRL's masked truncated completions).
+
+    Each group's mean ignores excluded rows. With ``std_scope="group"`` the divisor is the group's
+    unbiased std of its remaining rows, with ``"batch"`` the unbiased std of every remaining reward in
+    the batch; ``epsilon`` is added to it. Rows whose advantage is undefined (excluded rows, a group
+    with one remaining reward under std scaling, or no remaining rewards) get zero, as TRL's
+    ``nan_to_num`` gives.
+    """
+    if std_scope not in {"group", "batch"}:
+        raise ValueError(f"GRPO std scope must be 'group' or 'batch', got {std_scope!r}")
+    values = scores.clone()
+    if excluded is not None:
+        values[torch.as_tensor(np.asarray(excluded, dtype=bool), device=values.device)] = torch.nan
+
+    def nanstd(tensor: torch.Tensor) -> torch.Tensor:
+        count = (~torch.isnan(tensor)).sum()
+        variance = torch.nanmean((tensor - torch.nanmean(tensor)) ** 2) * count / (count - 1)
+        return torch.sqrt(variance)
+
+    groups: dict[object, list[int]] = defaultdict(list)
+    for row, group in enumerate(index):
+        groups[group].append(row)
+    advantages = torch.zeros_like(values)
+    batch_std = nanstd(values) if std_scope == "batch" and values.numel() > 1 else None
+    with torch.no_grad():
+        for rows in groups.values():
+            group_values = values[rows]
+            centered = group_values - torch.nanmean(group_values)
+            if normalize:
+                std = batch_std if batch_std is not None else nanstd(group_values)
+                centered = centered / (std + epsilon)
+            advantages[rows] = torch.nan_to_num(centered, nan=0.0)
+    return advantages
 
 
 @register_adv_est(AdvantageEstimator.GRPO_VECTORIZED)
