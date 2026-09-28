@@ -125,6 +125,16 @@ after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
 
+### LFM2 LoRA export regression test (candidate)
+
+No source change: LFM2.5 (hybrid short-convolution and attention blocks, tied
+input and output embeddings) trains through the generic FSDP2, PEFT and vLLM
+LoRA paths. `tests/model_merger/test_lfm2_lora_export_on_cpu.py` pins the
+export: a PEFT `all-linear` adapter on a tiny `Lfm2ForCausalLM` exports the
+eight projection targets (`q_proj`, `k_proj`, `v_proj`, `out_proj`,
+`in_proj`, `w1`, `w2`, `w3`), drops the tied `lm_head`, and reloads with
+identical logits.
+
 ### TRL-equivalent settings: sampler correction bounds, GRPO scaling, row exclusion, admission, linear LR (candidate)
 
 Posttrain selects TRL's GRPO semantics for every online-RL setting; these deltas
