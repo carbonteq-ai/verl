@@ -33,6 +33,23 @@ class TensorLoRARequest(LoRARequest):
     lora_tensors: dict = field(default=None)
 
 
+def lora_weights_mapper(model):
+    """The model's HF-to-vLLM mapper for naming LoRA modules, without stacking.
+
+    vLLM's own ``_load_adapter`` uses ``get_rename_mapper()``: LoRA adapters are
+    named per constituent module (``q_proj``, ``w1``) and packed by the LoRA
+    manager, so the stacked maps that load base weights (``q_proj`` ->
+    ``qkv_proj``, LFM2's ``w1``/``w3`` -> ``w13``) must not rename them. Applying
+    them collapses the constituents onto one name, the last one wins, and the
+    merged layer's ``set_lora`` receives a tensor instead of a per-slice list.
+    """
+    mapper = getattr(model, "hf_to_vllm_mapper", None)
+    if mapper is None:
+        return None
+    rename = getattr(mapper, "get_rename_mapper", None)
+    return rename() if callable(rename) else mapper
+
+
 class VLLMHijack:
     @staticmethod
     def hijack():
@@ -76,9 +93,7 @@ class VLLMHijack:
                 # For some models like Qwen2VL, we need to use hf_to_vllm_mapper
                 # to ensure correct loading of lora weights.
                 model = self._adapter_manager.model
-                hf_to_vllm_mapper = None
-                if hasattr(model, "hf_to_vllm_mapper") and model.hf_to_vllm_mapper is not None:
-                    hf_to_vllm_mapper = model.hf_to_vllm_mapper
+                hf_to_vllm_mapper = lora_weights_mapper(model)
 
                 lora_request_kwargs = {
                     "peft_helper": peft_helper,
@@ -96,6 +111,10 @@ class VLLMHijack:
                     lora_request_kwargs["target_embedding_padding"] = (
                         self.vocab_size + self.lora_config.lora_extra_vocab_size
                     )
+                # Model-defined prefixes vLLM skips while loading LoRA (e.g. MTP layers).
+                lora_skip_prefixes = getattr(model, "lora_skip_prefixes", None)
+                if lora_skip_prefixes is not None:
+                    lora_request_kwargs["skip_prefixes"] = lora_skip_prefixes
                 if isinstance(lora_request, TensorLoRARequest):
                     lora = self._lora_model_cls.from_lora_tensors(
                         tensors=lora_tensors,

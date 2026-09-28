@@ -150,6 +150,27 @@ after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
 
+### LoRA tensor sync keeps constituent module names (candidate)
+
+`VLLMHijack`'s `_load_adapter` (`verl/utils/vllm/utils.py`), which loads the
+actor's LoRA tensors into vLLM (`TensorLoRARequest`), named LoRA modules with
+the model's full `hf_to_vllm_mapper`. Its stacked maps (`q_proj`/`k_proj`/
+`v_proj` -> `qkv_proj`, LFM2's `w1`/`w3` -> `w13`) are for base weights: on
+LoRA names they collapse the constituents onto one name, the last one wins,
+and vLLM's merged column layer fails in `set_lora` (`IndexError: tuple index
+out of range`). vLLM's own loader uses `hf_to_vllm_mapper.get_rename_mapper()`;
+the new `lora_weights_mapper` does the same (falling back to the full mapper
+on vLLM releases without it) and passes the model's `lora_skip_prefixes`.
+Found by Posttrain run `verl-vortex-lfm12-check-20260929-r3` (LFM2.5-1.2B,
+all-linear LoRA, post6); Qwen3.5 runs never hit it because their LoRA targets
+only `o_proj`/`down_proj`. Regression test
+`tests/utils/test_vllm_lora_rename_mapper_on_cpu.py` (needs vLLM; run it in the
+kind image) keeps `w1`, `w3`, `q_proj`, `k_proj` and `short_conv.in_proj`
+apart and fails with the full mapper. GPU check (RTX 3070 Ti, post6 kind image
+with this source mounted): an LFM2.5-1.2B all-linear adapter synced as tensors
+scores a 29-token text within 0.055 nats/token of PEFT (vLLM's base-model gap
+is 0.040), against an adapter effect of 1.03 nats/token.
+
 ### LFM2 LoRA export regression test (post6)
 
 No source change: LFM2.5 (hybrid short-convolution and attention blocks, tied
