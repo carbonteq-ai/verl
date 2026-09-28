@@ -386,3 +386,19 @@ def test_candidate_batches_fail_after_the_reserved_rounds(tq_init, partition_id)
         keys = list(tq.kv_list(partition_id=partition_id).get(partition_id, {}).keys())
         if keys:
             tq.kv_clear(keys=keys, partition_id=partition_id)
+
+
+def test_candidate_batches_retry_failed_groups_in_place(tq_init, partition_id):
+    dispatcher = _Dispatcher(partition_id, ["failure", [0.0, 1.0]])
+    retries = _Dispatcher(partition_id, [[1.0, 0.0]])
+    buffer, _ = _candidate_buffer(
+        dispatcher, active_max_rounds=1, retry_fn=lambda uid: retries(1)[0], failed_group_attempts=2
+    )
+    try:
+        batch, _ = buffer.sample(global_steps=1, partition_id=partition_id, batch_size=2)
+        # The retried group keeps the failed group's candidate position (first).
+        assert {key.split("_")[0] for key in batch.keys} == {retries.uids[0], dispatcher.uids[1]}
+    finally:
+        keys = list(tq.kv_list(partition_id=partition_id).get(partition_id, {}).keys())
+        if keys:
+            tq.kv_clear(keys=keys, partition_id=partition_id)
