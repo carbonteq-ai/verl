@@ -12,6 +12,7 @@
 # limitations under the License.
 
 import logging
+import math
 
 import torch
 
@@ -118,4 +119,30 @@ def calculate_debug_metrics(data: DataProto) -> dict:
         "training/rollout_probs_diff_mean": torch.mean(rollout_probs_diff).detach().item(),
         "training/rollout_probs_diff_std": torch.std(rollout_probs_diff).detach().item(),
         "training/rollout_actor_probs_pearson_corr": pearson_corrcoef,
+        **rollout_log_prob_gap_metrics(actor_old_log_probs, rollout_old_log_probs, response_mask_bool),
+    }
+
+
+def rollout_log_prob_gap_metrics(
+    actor_log_probs: torch.Tensor, rollout_log_probs: torch.Tensor, mask: torch.Tensor
+) -> dict[str, float]:
+    """Size of the per-token log-probability gap between the actor and the rollout engine.
+
+    The probability-space difference above hides the gap on unlikely tokens, where the
+    importance ratio is most sensitive; these report |log p_actor - log p_rollout| per
+    token (mean, 99th percentile, max) and the mean absolute per-sequence sum, the
+    sequence-level log-ratio. Numeric precision (bf16 against fp16) moves these directly.
+    """
+
+    difference = (actor_log_probs.float() - rollout_log_probs.float()).masked_fill(~mask, 0.0)
+    tokens = torch.masked_select(difference.abs(), mask)
+    if tokens.numel() == 0:
+        return {}
+    rank = max(1, math.ceil(0.99 * tokens.numel()))
+    sequences = difference.sum(dim=-1)[mask.any(dim=-1)]
+    return {
+        "training/rollout_logp_diff_mean": tokens.mean().item(),
+        "training/rollout_logp_diff_p99": tokens.kthvalue(rank).values.item(),
+        "training/rollout_logp_diff_max": tokens.max().item(),
+        "training/rollout_seq_logp_diff_abs_mean": sequences.abs().mean().item(),
     }

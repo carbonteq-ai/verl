@@ -16,7 +16,7 @@ import unittest
 import torch
 
 from verl.protocol import DataProto
-from verl.utils.debug.metrics import calculate_debug_metrics
+from verl.utils.debug.metrics import calculate_debug_metrics, rollout_log_prob_gap_metrics
 
 
 class TestMetrics(unittest.TestCase):
@@ -42,6 +42,27 @@ class TestMetrics(unittest.TestCase):
         metrics = calculate_debug_metrics(data)
         print(metrics)
         assert metrics["training/rollout_probs_diff_valid"] == 1
+        # The log-probability gap is reported beside the probability-space difference.
+        for key in (
+            "training/rollout_logp_diff_mean",
+            "training/rollout_logp_diff_p99",
+            "training/rollout_logp_diff_max",
+            "training/rollout_seq_logp_diff_abs_mean",
+        ):
+            assert key in metrics
+
+    def test_rollout_log_prob_gap_metrics(self):
+        actor = torch.tensor([[-0.1, -0.2, -0.3, 0.0], [-1.0, -1.0, 0.0, 0.0]])
+        rollout = torch.tensor([[-0.1, -0.1, -0.2, 5.0], [-1.5, -1.0, 0.0, 0.0]])
+        mask = torch.tensor([[True, True, True, False], [True, True, False, False]])
+        metrics = rollout_log_prob_gap_metrics(actor, rollout, mask)
+        # |gap| per scored token: 0, 0.1, 0.1, 0.5, 0 (the masked 5.0 is ignored)
+        self.assertAlmostEqual(metrics["training/rollout_logp_diff_mean"], 0.14, places=5)
+        self.assertAlmostEqual(metrics["training/rollout_logp_diff_p99"], 0.5, places=5)
+        self.assertAlmostEqual(metrics["training/rollout_logp_diff_max"], 0.5, places=5)
+        # per-sequence sums of (actor - rollout): -0.2 and +0.5
+        self.assertAlmostEqual(metrics["training/rollout_seq_logp_diff_abs_mean"], 0.35, places=5)
+        self.assertEqual(rollout_log_prob_gap_metrics(actor, rollout, torch.zeros_like(mask)), {})
 
 
 if __name__ == "__main__":

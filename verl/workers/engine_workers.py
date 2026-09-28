@@ -202,6 +202,10 @@ class TrainingWorker(Worker, DistProfilerExtension):
         if isinstance(grad_norm, torch.Tensor):
             grad_norm = grad_norm.detach().item()
         lr = metrics.pop("lr", None)
+        # Loss-scaler state is per optimizer step, identical on every rank, like grad_norm.
+        loss_scale_metrics = {
+            name: metrics.pop(name) for name in ("loss_scale", "optimizer_step_skipped") if name in metrics
+        }
 
         # For other metrics, we perform all gather in dp group (only if DP > 1)
         if dp_group is not None:
@@ -213,6 +217,7 @@ class TrainingWorker(Worker, DistProfilerExtension):
             final_metrics["grad_norm"] = grad_norm
         if lr is not None:
             final_metrics["lr"] = lr
+        final_metrics.update(loss_scale_metrics)
 
         # log memory
         final_metrics["perf/max_memory_allocated_gb"] = get_torch_device().max_memory_allocated() / (1024**3)

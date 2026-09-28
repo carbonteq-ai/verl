@@ -2,6 +2,18 @@
 
 ## Status
 
+**Release candidate `0.9.0.post4`.** Post4 is post3 (`18338a0e`, through its
+publication receipt `78266f97`) plus fp16 training evidence from the FSDP
+engine's existing loss scaling (`actor/loss_scale` and
+`actor/optimizer_step_skipped` per optimizer step) and the per-token
+rollout-versus-actor log-probability gap
+(`training/rollout_logp_diff_{mean,p99,max}`,
+`training/rollout_seq_logp_diff_abs_mean`). It changes no training behavior and
+no dependency, including the `vllm` extra. Branch: `codex/precision-fp16`,
+tagged `carbonteq-v0.9.0.post4` at this release commit. The wheel and sdist
+SHA-256 values of the retained assets are recorded in the receipt commit that
+follows the tag.
+
 **Release candidate `0.9.0.post3`.** Post3 retains the post2 runtime and updates
 the `vllm` extra to the exact CarbonTeq Uno source-overlay commit
 `37706e7d920abc97c705ffecee0919d64ef31485`, released as
@@ -344,6 +356,49 @@ lossless external aggregation.
 CPU regression coverage:
 `tests/trainer/ppo/test_metric_utils_on_cpu.py`.
 
+### Report fp16 loss scaling and the rollout log-probability gap (post4 candidate)
+
+Upstream v0.9 already trains FSDP in float16: `fsdp_config.mixed_precision`
+with `param_dtype: fp16` (reduce and buffer dtypes fp32) makes
+`FSDPEngine._build_fsdp_module` create a `ShardedGradScaler(growth_interval=400)`
+that scales the loss, unscales before gradient clipping, and skips a step whose
+gradients overflow, over float32 master weights (the recipe of Qi et al. 2025,
+"Defeating the Training-Inference Mismatch via FP16", arXiv 2510.26788). It
+reported neither the scale nor the skips, and the rollout-versus-actor metrics
+compared probabilities, which hides the log-probability gap on unlikely tokens
+that precision changes most.
+
+- `FSDPEngine.optimizer_step` records `loss_scale` (the scale used for the step)
+  and `optimizer_step_skipped` (1 when `GradScaler.update` lowered the scale,
+  exactly when the step found inf/NaN gradients); `BaseEngine.train_batch` adds
+  them to the step's metrics on the output rank and
+  `EngineWorker._postprocess_output` keeps them per step like `grad_norm`, so
+  the trainer logs `actor/loss_scale` and `actor/optimizer_step_skipped` (the
+  skipped share of the update's optimizer steps). bf16/fp32 report nothing new.
+- `calculate_debug_metrics` adds `training/rollout_logp_diff_mean`, `_p99`,
+  `_max` (|log p_actor - log p_rollout| per response token) and
+  `training/rollout_seq_logp_diff_abs_mean` (mean absolute per-sequence sum).
+
+Regression: `tests/workers/test_fsdp_loss_scale_metrics_on_cpu.py` (scaled step,
+overflow skip with the scale halved and weights unchanged, bf16 no-op,
+`train_batch` merge, per-step worker metrics) and
+`tests/utils/debug/test_metrics.py`. Consumer:
+Posttrain branch `codex/precision-fp16-verl` maps these to `train/loss_scale`,
+`train/optimizer_steps_skipped` and `train/rl/sampling_logp_delta_*`, and
+already tolerates the infinite gradient norm of a skipped step on post3.
+
+Build from the tagged commit. The wheel is byte-reproducible; setuptools
+stamps the sdist archive with checkout and build times, so two sdist builds
+have identical member contents but different bytes, and the retained release
+asset is the authority for its hash:
+
+```bash
+git clone --branch carbonteq-v0.9.0.post4 https://github.com/carbonteq-ai/verl.git verl-post4
+cd verl-post4
+SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" uv build --out-dir dist
+sha256sum dist/verl-0.9.0.post4-py3-none-any.whl dist/verl-0.9.0.post4.tar.gz
+```
+
 ### Report step-local vLLM MTP acceptance
 
 `verl/workers/rollout/llm_server.py` reads aggregate vLLM Prometheus
@@ -414,6 +469,17 @@ CPU regression coverage:
   unqualified until the consuming framework's DAPO and SAMPO GPU gates pass.
 
 ## Validation
+
+Post4 candidate focused CPU validation:
+
+```bash
+PYTHONPATH=$PWD python -m pytest -q \
+  tests/workers/test_fsdp_loss_scale_metrics_on_cpu.py \
+  tests/utils/debug/test_metrics.py \
+  tests/workers/test_fsdp_gradient_accumulation_sync_on_cpu.py
+ruff check verl/utils/debug/metrics.py verl/workers/engine/base.py \
+  verl/workers/engine/fsdp/transformer_impl.py verl/workers/engine_workers.py
+```
 
 Published SAMPO CPU validation:
 

@@ -129,6 +129,8 @@ class BaseEngine:
         if self.is_mp_src_rank_with_outputs():
             assert "grad_norm" not in outputs["metrics"]
             outputs["metrics"]["grad_norm"] = grad_norm
+            # fp16 dynamic loss scaling: the scale used for this step and whether overflow skipped it.
+            outputs["metrics"].update(getattr(self, "last_loss_scale_metrics", None) or {})
         return outputs
 
     def infer_batch(self, data: TensorDict, loss_function: Optional[Callable] = None) -> Any:

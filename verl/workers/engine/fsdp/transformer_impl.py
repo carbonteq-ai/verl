@@ -153,6 +153,8 @@ class FSDPEngine(BaseEngine):
         # defaults so forward_step / optimizer_step can still read them safely.
         self._autocast_dtype = torch.bfloat16
         self.scaler = None
+        # Loss-scaler evidence of the latest optimizer step (fp16 only), reported by train_batch.
+        self.last_loss_scale_metrics: dict[str, float] = {}
 
         # QAT (Quantization-Aware Training)
         self._qat_config = getattr(self.engine_config, "qat", None)
@@ -823,8 +825,14 @@ class FSDPEngine(BaseEngine):
 
         if scaler is not None:
             # scaler handles inf/nan skipping internally via _check_inf_per_device.
+            scale = scaler.get_scale()
             scaler.step(self.optimizer)
             scaler.update()
+            # update() lowers the scale exactly when this step found inf/nan gradients and was skipped.
+            self.last_loss_scale_metrics = {
+                "loss_scale": float(scale),
+                "optimizer_step_skipped": float(scaler.get_scale() < scale),
+            }
         else:
             # if grad_norm is not finite, skip the update
             if not torch.isfinite(grad_norm):
