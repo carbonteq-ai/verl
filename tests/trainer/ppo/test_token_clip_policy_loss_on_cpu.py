@@ -138,3 +138,48 @@ def test_k3_unclipped_matches_trl_and_is_not_clamped():
     assert value[1] > 10 and kl_penalty(logprob, ref, "low_var_kl")[1] == 10
     (grad,) = torch.autograd.grad(value.sum(), logprob)
     torch.testing.assert_close(grad, 1 - torch.exp(ref - logprob.detach()), rtol=1e-12, atol=1e-12)
+
+
+def _sequence_reference(old, new, adv, mask, low, high, weights=None):
+    """TRL GRPOTrainer._compute_loss, loss_type='grpo', importance_sampling_level='sequence', one micro-batch."""
+    log_weight = ((new - old) * mask).sum(-1, keepdim=True) / mask.sum(-1, keepdim=True).clamp(min=1.0)
+    coef_1 = torch.exp(log_weight)
+    coef_2 = torch.clamp(coef_1, 1 - low, 1 + high)
+    per_token = -torch.min(coef_1 * adv, coef_2 * adv)
+    if weights is not None:
+        per_token = per_token * weights
+    return ((per_token * mask).sum(-1) / mask.sum(-1).clamp(min=1.0)).mean()
+
+
+def test_sequence_clip_matches_trl_sequence_level_ratio_with_per_token_advantages():
+    old, new, _, mask = _batch()
+    new = (old + (new - old) * 0.001).clone().requires_grad_(True)  # inside the 0.003/0.004 clip range
+    advantages = torch.linspace(-1.0, 1.0, 24, dtype=torch.float64).reshape(4, 6)  # varies within rows
+    weights = torch.linspace(0.5, 2.0, 24, dtype=torch.float64).reshape(4, 6)
+    config = _config(low=0.003, high=0.004)
+    loss, _ = get_policy_loss_fn("sequence_clip")(
+        old_log_prob=old,
+        log_prob=new,
+        advantages=advantages,
+        response_mask=mask,
+        loss_agg_mode="seq-mean-token-mean",
+        config=config,
+        rollout_is_weights=weights,
+    )
+    expected = _sequence_reference(old, new, advantages, mask, 0.003, 0.004, weights)
+    # veRL's seq-mean-token-mean divides by (tokens + 1e-8) where TRL clamps at 1.
+    torch.testing.assert_close(loss, expected, rtol=1e-8, atol=1e-12)
+    (grad,) = torch.autograd.grad(loss, new)
+    (expected_grad,) = torch.autograd.grad(_sequence_reference(old, new, advantages, mask, 0.003, 0.004, weights), new)
+    torch.testing.assert_close(grad, expected_grad, rtol=1e-8, atol=1e-12)
+    # GSPO's stop-gradient token form gives each token its own advantage, so its gradient differs.
+    gspo, _ = get_policy_loss_fn("gspo")(
+        old_log_prob=old,
+        log_prob=new,
+        advantages=advantages,
+        response_mask=mask,
+        config=config,
+        rollout_is_weights=weights,
+    )
+    (gspo_grad,) = torch.autograd.grad(gspo, new)
+    assert grad.abs().sum() > 0 and not torch.allclose(gspo_grad, grad)

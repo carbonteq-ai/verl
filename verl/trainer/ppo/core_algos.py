@@ -469,12 +469,28 @@ def compute_sampo_outcome_advantage(
         if metrics is not None:
             flat_turn_advantages = [value for values in turn_advantages for value in values]
             anchor_members = sum(len(members) for members in anchor_groups.values())
+            member_sizes = [
+                len(members) for members in anchor_groups.values() for _ in members
+            ]  # one entry per turn, its anchor group's size
+            turn_abs = torch.stack(flat_turn_advantages).abs()
+            episode_credit = sum(
+                float(episode_advantages[row].abs().item()) for row, spans in enumerate(parsed_spans) for _ in spans
+            )
+            turn_credit = float((step_weight * turn_abs).sum().item())
+            if episode_credit + turn_credit > 0:
+                metrics["sampo/turn_credit_share"] = turn_credit / (episode_credit + turn_credit)
+            metrics.update(
+                {
+                    "sampo/episode_advantage_abs_mean": float(episode_advantages.abs().mean().item()),
+                    "sampo/turn_advantage_abs_mean": float(turn_abs.mean().item()),
+                    "sampo/turn_advantage_informative_fraction": float((turn_abs > 1e-9).float().mean().item()),
+                    "sampo/singleton_anchor_fraction": sum(size == 1 for size in member_sizes) / len(member_sizes),
+                }
+            )
             metrics.update(
                 {
                     "sampo/episode_advantage_mean": float(episode_advantages.mean().item()),
-                    "sampo/turn_advantage_mean": float(
-                        torch.stack(flat_turn_advantages).mean().item()
-                    ),
+                    "sampo/turn_advantage_mean": float(torch.stack(flat_turn_advantages).mean().item()),
                     "sampo/anchor_group_size_mean": float(
                         sum(len(members) ** 2 for members in anchor_groups.values()) / anchor_members
                     ),
@@ -1579,6 +1595,53 @@ def compute_policy_loss_token_clip(
     pg_metrics = {
         "actor/pg_clipfrac": verl_F.masked_mean(torch.gt(clipped, unclipped).float(), response_mask).detach().item(),
         "actor/ppo_kl": verl_F.masked_mean(-delta, response_mask).detach().item(),
+        "actor/pg_clipfrac_lower": 0.0,
+    }
+    return pg_loss, pg_metrics
+
+
+@register_policy_loss("sequence_clip")  # type: ignore[arg-type]
+def compute_policy_loss_sequence_clip(
+    old_log_prob: torch.Tensor,
+    log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    response_mask: torch.Tensor,
+    loss_agg_mode: str = "seq-mean-token-mean",
+    config: Optional[ActorConfig] = None,
+    rollout_is_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Clipped objective with one sequence-level ratio, as TRL's GRPO ``importance_sampling_level="sequence"``.
+
+    ``s_i = exp(mean_t(log_prob - old_log_prob))`` over each row's sampled tokens, with gradient
+    through that mean (unlike ``gspo``, whose stop-gradient form gives every token its own
+    advantage). Per token: ``max(-A * s_i, -A * clip(s_i, 1 - clip_ratio_low, 1 + clip_ratio_high))``,
+    multiplied by rollout-correction weights when present, then aggregated. With per-token
+    advantages (SAMPO turns) this spreads each row's mean weighted advantage over its tokens, which
+    is what the TRL SAMPO path optimizes.
+    """
+    if config is None:
+        raise ValueError("sequence_clip requires actor configuration")
+    assert not isinstance(config, AlgoConfig)
+    mask = response_mask.to(log_prob.dtype)
+    lengths = mask.sum(dim=-1).clamp(min=1.0)
+    log_ratio = torch.where(response_mask.bool(), log_prob - old_log_prob, torch.zeros_like(log_prob))
+    sequence_log_ratio = (log_ratio * mask).sum(dim=-1, keepdim=True) / lengths.unsqueeze(-1)
+    ratio = torch.exp(sequence_log_ratio)
+    if not torch.isfinite(ratio).all():
+        raise ValueError("sequence_clip sequence importance ratio is non-finite")
+    lower = config.clip_ratio_low if config.clip_ratio_low is not None else config.clip_ratio
+    upper = config.clip_ratio_high if config.clip_ratio_high is not None else config.clip_ratio
+    unclipped = -advantages * ratio
+    clipped = -advantages * torch.clamp(ratio, 1 - lower, 1 + upper)
+    pg_losses = torch.maximum(unclipped, clipped)
+    if rollout_is_weights is not None:
+        pg_losses = pg_losses * rollout_is_weights
+    pg_loss = agg_loss(
+        loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode, **config.global_batch_info
+    )
+    pg_metrics = {
+        "actor/pg_clipfrac": verl_F.masked_mean(torch.gt(clipped, unclipped).float(), response_mask).detach().item(),
+        "actor/ppo_kl": verl_F.masked_mean(-log_ratio, response_mask).detach().item(),
         "actor/pg_clipfrac_lower": 0.0,
     }
     return pg_loss, pg_metrics

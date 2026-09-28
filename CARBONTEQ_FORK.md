@@ -6,8 +6,9 @@
 `codex/vortex-active-sampling`, from the post5 receipt `9c10bd1a`).** Adds the
 `algorithm.active_sampling` block and `ActiveSamplingReplayBuffer`, and the
 `data.prompt_selector` extension point, described under "Maintained delta".
-Phases 2 and 3 of Posttrain's `docs/plan/verl-vortex-port.md`; no release or
-tag yet (the next release candidate, post6, collects phases 2-5).
+Phases 2, 3 and 5 of Posttrain's `docs/plan/verl-vortex-port.md` (plus the
+`sequence_clip` loss and SAMPO hierarchy metrics for SAMPO parity with TRL); no
+release or tag yet (the next release candidate, post6, collects phases 2-5).
 
 **Release candidate `0.9.0.post5`.** Post5 is the post4 release commit
 (`54124edf`) plus the token-clip policy loss and the unclipped k3 KL estimator
@@ -123,6 +124,26 @@ The published release commit and index artifact hashes are recorded here only
 after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
+
+### Sequence-ratio clip loss and SAMPO hierarchy evidence (candidate)
+
+TRL's GRPO trainer with `importance_sampling_level="sequence"` (the objective
+Posttrain's TRL SAMPO path runs) forms one ratio per row,
+`s_i = exp(mean_t(log_prob - old_log_prob))`, and takes the gradient through
+that mean. veRL's `gspo` uses GSPO's stop-gradient token form, which gives each
+token its own advantage; with SAMPO's per-turn advantages the two gradients
+differ. `verl/trainer/ppo/core_algos.py` registers `sequence_clip` with TRL's
+form (per-token clip of the shared ratio, rollout-correction weights, normal
+aggregation). With `seq-mean-token-mean` it matches TRL to 1e-8 relative
+(veRL divides by tokens + 1e-8 where TRL clamps at 1).
+
+The SAMPO estimator also reports `sampo/episode_advantage_abs_mean`,
+`sampo/turn_advantage_abs_mean`, `sampo/turn_advantage_informative_fraction`,
+`sampo/singleton_anchor_fraction` and `sampo/turn_credit_share`, the hierarchy
+evidence the consumer records for its TRL path.
+
+CPU regression coverage: `tests/trainer/ppo/test_token_clip_policy_loss_on_cpu.py`
+and `tests/trainer/ppo/test_sampo_advantage_on_cpu.py`.
 
 ### Prompt selector extension point (candidate)
 

@@ -48,14 +48,14 @@ def test_sampo_combines_episode_and_anchor_relative_turn_advantages() -> None:
     expected = torch.tensor([[-1.5, -1.5, -2.0, -2.0], [1.5, 1.5, 2.0, 2.0]])
     torch.testing.assert_close(advantages, expected)
     torch.testing.assert_close(returns, expected)
-    assert metrics == pytest.approx(
-        {
-            "sampo/episode_advantage_mean": 0.0,
-            "sampo/turn_advantage_mean": 0.0,
-            "sampo/anchor_group_size_mean": 2.0,
-            "sampo/sparse_reward_projection_fraction": 1.0,
-        }
-    )
+    expected_means = {
+        "sampo/episode_advantage_mean": 0.0,
+        "sampo/turn_advantage_mean": 0.0,
+        "sampo/anchor_group_size_mean": 2.0,
+        "sampo/sparse_reward_projection_fraction": 1.0,
+    }
+    assert {name: metrics[name] for name in expected_means} == pytest.approx(expected_means)
+    assert metrics["sampo/singleton_anchor_fraction"] == 0.0
 
 
 def test_sampo_uses_explicit_step_rewards_and_masks_non_policy_tokens() -> None:
@@ -101,14 +101,14 @@ def test_compute_advantage_routes_agent_loop_metadata_to_sampo() -> None:
         result.batch["advantages"],
         torch.tensor([[-2.0, -2.0], [2.0, 2.0]]),
     )
-    assert result.meta_info["sampo_metrics"] == pytest.approx(
-        {
-            "sampo/episode_advantage_mean": 0.0,
-            "sampo/turn_advantage_mean": 0.0,
-            "sampo/anchor_group_size_mean": 2.0,
-            "sampo/sparse_reward_projection_fraction": 1.0,
-        }
-    )
+    expected_means = {
+        "sampo/episode_advantage_mean": 0.0,
+        "sampo/turn_advantage_mean": 0.0,
+        "sampo/anchor_group_size_mean": 2.0,
+        "sampo/sparse_reward_projection_fraction": 1.0,
+    }
+    sampo_metrics = result.meta_info["sampo_metrics"]
+    assert {name: sampo_metrics[name] for name in expected_means} == pytest.approx(expected_means)
 
 
 def test_compute_advantage_rejects_missing_sampo_metadata() -> None:
@@ -167,3 +167,39 @@ def test_sampo_rejects_incomplete_prompt_groups() -> None:
             num_repeat=2,
             config=_config(),
         )
+
+
+def test_sampo_reports_hierarchy_evidence_like_the_consumer():
+    import numpy as np
+    import torch
+
+    from verl.trainer.config import AlgoConfig, SampoConfig
+    from verl.trainer.ppo.core_algos import compute_sampo_outcome_advantage
+
+    mask = torch.ones(2, 4)
+    rewards = torch.zeros(2, 4)
+    rewards[0, -1], rewards[1, -1] = 1.0, 0.0
+    spans = np.empty(2, dtype=object)
+    spans[:] = [[[0, 2], [2, 4]], [[0, 2], [2, 4]]]
+    anchors = np.empty(2, dtype=object)
+    anchors[:] = [["a", "b"], ["a", "c"]]
+    steps = np.empty(2, dtype=object)
+    steps[:] = [[None, None], [None, None]]
+    metrics: dict = {}
+    compute_sampo_outcome_advantage(
+        rewards,
+        mask,
+        np.array(["g", "g"], dtype=object),
+        spans,
+        anchors,
+        steps,
+        num_repeat=2,
+        config=AlgoConfig(sampo=SampoConfig(discount_gamma=0.5, step_advantage_weight=1.0)),
+        metrics=metrics,
+    )
+    # Episode advantages +-0.5; turn "a" (shared, returns 0.5 vs 0) gets +-0.25; "b"/"c" are singletons.
+    assert metrics["sampo/episode_advantage_abs_mean"] == 0.5
+    assert metrics["sampo/turn_advantage_abs_mean"] == 0.125
+    assert metrics["sampo/turn_advantage_informative_fraction"] == 0.5
+    assert metrics["sampo/singleton_anchor_fraction"] == 0.5
+    assert metrics["sampo/turn_credit_share"] == 0.5 / (2.0 + 0.5)
