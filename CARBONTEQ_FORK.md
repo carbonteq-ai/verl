@@ -2,13 +2,21 @@
 
 ## Status
 
-**Unpublished candidate: round-based active sampling (branch
-`codex/vortex-active-sampling`, from the post5 receipt `9c10bd1a`).** Adds the
-`algorithm.active_sampling` block and `ActiveSamplingReplayBuffer`, and the
-`data.prompt_selector` extension point, described under "Maintained delta".
-Phases 2, 3 and 5 of Posttrain's `docs/plan/verl-vortex-port.md` (plus the
-`sequence_clip` loss and SAMPO hierarchy metrics for SAMPO parity with TRL); no
-release or tag yet (the next release candidate, post6, collects phases 2-5).
+**Release candidate `0.9.0.post6`.** Post6 is the post5 asset receipt
+(`9c10bd1a`) plus the VORTEX and SAMPO deltas of Posttrain's
+`docs/plan/verl-vortex-port.md` (phases 2 to 5), each marked "(post6)" under
+"Maintained delta": round-based active sampling
+(`algorithm.active_sampling`), the `data.prompt_selector` extension point with
+checkpointed selector state, the `sequence_clip` policy loss and SAMPO
+hierarchy evidence metrics, the TRL-equivalent GRPO settings (sampler
+correction lower bound and log-ratio bound, TRL-mode GRPO statistics with
+group or batch scope, row exclusion, failed-group admission retries, the
+`linear` learning-rate schedule) and candidate-batch DAPO
+(`algorithm.filter_groups.candidate_batches`), plus an LFM2 LoRA export
+regression test. It changes no dependency. Every new behaviour is opt-in: with
+the new keys at their defaults the trainer behaves as post5. Branch:
+`codex/vortex-active-sampling`. The wheel and sdist SHA-256 values of the
+retained assets are recorded in the receipt commit that follows the tag.
 
 **Release candidate `0.9.0.post5`.** Post5 is the post4 release commit
 (`54124edf`) plus the token-clip policy loss and the unclipped k3 KL estimator
@@ -125,7 +133,7 @@ after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
 
-### LFM2 LoRA export regression test (candidate)
+### LFM2 LoRA export regression test (post6)
 
 No source change: LFM2.5 (hybrid short-convolution and attention blocks, tied
 input and output embeddings) trains through the generic FSDP2, PEFT and vLLM
@@ -135,7 +143,7 @@ eight projection targets (`q_proj`, `k_proj`, `v_proj`, `out_proj`,
 `in_proj`, `w1`, `w2`, `w3`), drops the tied `lm_head`, and reloads with
 identical logits.
 
-### TRL-equivalent settings: sampler correction bounds, GRPO scaling, row exclusion, admission, linear LR (candidate)
+### TRL-equivalent settings: sampler correction bounds, GRPO scaling, row exclusion, admission, linear LR (post6)
 
 Posttrain selects TRL's GRPO semantics for every online-RL setting; these deltas
 let veRL reproduce the ones upstream cannot express.
@@ -183,7 +191,7 @@ CPU regression coverage: `tests/trainer/ppo/v1/test_trainer_base_on_cpu.py`,
 `tests/trainer/ppo/v1/test_active_sampling_on_cpu.py`,
 `tests/utils/test_linear_lr_schedule_on_cpu.py`.
 
-### Sequence-ratio clip loss and SAMPO hierarchy evidence (candidate)
+### Sequence-ratio clip loss and SAMPO hierarchy evidence (post6)
 
 TRL's GRPO trainer with `importance_sampling_level="sequence"` (the objective
 Posttrain's TRL SAMPO path runs) forms one ratio per row,
@@ -203,7 +211,7 @@ evidence the consumer records for its TRL path.
 CPU regression coverage: `tests/trainer/ppo/test_token_clip_policy_loss_on_cpu.py`
 and `tests/trainer/ppo/test_sampo_advantage_on_cpu.py`.
 
-### Prompt selector extension point (candidate)
+### Prompt selector extension point (post6)
 
 A caller-owned curriculum must choose which tasks every dispatch uses, from
 evidence of earlier rounds, and checkpoint its state with the model. Upstream
@@ -227,7 +235,7 @@ veRL draws prompts only from the dataloader's sampler and has no feedback path.
 CPU regression coverage: `tests/trainer/ppo/v1/test_prompt_selector_on_cpu.py`
 and `tests/trainer/ppo/v1/test_active_sampling_on_cpu.py`.
 
-### Round-based active sampling in the synchronous V1 trainer (candidate)
+### Round-based active sampling in the synchronous V1 trainer (post6)
 
 veRL's DAPO `filter_groups` path streams: every evicted group adds two refill
 credits and replacement prompts start while earlier ones still run. TRL's GRPO
@@ -682,6 +690,22 @@ CPU regression coverage:
   unqualified until the consuming framework's DAPO and SAMPO GPU gates pass.
 
 ## Validation
+
+Post6 focused CPU validation (2026-09-29: 348 passed, 2 skipped, on Python
+3.13 with torch 2.13 CPU, transformers 5.14, peft 0.19, ray 2.56.1,
+transferqueue 0.1.8):
+
+```bash
+PYTHONPATH=$PWD python -m pytest -q \
+  tests/trainer \
+  tests/model_merger \
+  tests/utils/test_linear_lr_schedule_on_cpu.py
+ruff check $(git diff --name-only 9c10bd1a HEAD -- '*.py')
+bash scripts/generate_trainer_config.sh && git diff --exit-code
+```
+
+Posttrain's parity tests run TRL post11's real code against this delta
+(`packages/train/tests/test_verl_*_parity.py`, 49 passed).
 
 Post5 focused CPU validation (plus `tests/trainer/ppo/v1/` for active sampling):
 
