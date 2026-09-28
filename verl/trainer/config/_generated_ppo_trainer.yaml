@@ -508,6 +508,10 @@ data:
     enable: false
     model_family: auto
   mm_processor_kwargs: {}
+  prompt_selector:
+    class_path: null
+    kwargs: {}
+    metric: seq_reward
 critic:
   optim:
     _target_: verl.workers.config.FSDPOptimizerConfig

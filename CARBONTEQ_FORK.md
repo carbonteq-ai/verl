@@ -4,9 +4,10 @@
 
 **Unpublished candidate: round-based active sampling (branch
 `codex/vortex-active-sampling`, from the post5 receipt `9c10bd1a`).** Adds the
-`algorithm.active_sampling` block and `ActiveSamplingReplayBuffer` described
-under "Maintained delta". Phase 2 of Posttrain's
-`docs/plan/verl-vortex-port.md`; no release or tag yet.
+`algorithm.active_sampling` block and `ActiveSamplingReplayBuffer`, and the
+`data.prompt_selector` extension point, described under "Maintained delta".
+Phases 2 and 3 of Posttrain's `docs/plan/verl-vortex-port.md`; no release or
+tag yet (the next release candidate, post6, collects phases 2-5).
 
 **Release candidate `0.9.0.post5`.** Post5 is the post4 release commit
 (`54124edf`) plus the token-clip policy loss and the unclipped k3 KL estimator
@@ -122,6 +123,30 @@ The published release commit and index artifact hashes are recorded here only
 after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
+
+### Prompt selector extension point (candidate)
+
+A caller-owned curriculum must choose which tasks every dispatch uses, from
+evidence of earlier rounds, and checkpoint its state with the model. Upstream
+veRL draws prompts only from the dataloader's sampler and has no feedback path.
+
+- `verl/trainer/ppo/v1/prompt_selector.py`: the `PromptSelector` protocol
+  (`select(num_prompts, global_steps, stage, round_index)` returning dataset
+  indices; `observe([(dataset_index, metric values)], global_steps)`;
+  `save_checkpoint(dir)`; `load_checkpoint(dir)`) and `load_prompt_selector`.
+- `data.prompt_selector` (`class_path`, `kwargs`, `metric`) in
+  `legacy_data.yaml` and the regenerated reference configs.
+- `verl/trainer/ppo/v1/trainer_base.py`: dispatches build their batch from the
+  selected dataset rows (stage `initial_batch`, or `active_sampling_refill`
+  with rounds numbered from 1); finished groups are observed after each
+  active-sampling round (kept and rejected, failed groups excluded) or after
+  the step's batch is sampled; the selector saves into and loads from each
+  `global_step_*` folder. Sync mode only; not with DAPO `filter_groups`.
+- `ActiveSamplingReplayBuffer` passes `round_index` to the dispatcher and calls
+  `observe_fn` with each round's finished groups in dispatch order.
+
+CPU regression coverage: `tests/trainer/ppo/v1/test_prompt_selector_on_cpu.py`
+and `tests/trainer/ppo/v1/test_active_sampling_on_cpu.py`.
 
 ### Round-based active sampling in the synchronous V1 trainer (candidate)
 

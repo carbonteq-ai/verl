@@ -128,10 +128,12 @@ class _Dispatcher:
         self.partition_id = partition_id
         self.groups = list(groups)
         self.calls: list[int] = []
+        self.rounds: list[int | None] = []
         self.uids: list[str] = []
 
-    def __call__(self, count: int) -> list[str]:
+    def __call__(self, count: int, round_index: int | None = None) -> list[str]:
         self.calls.append(count)
+        self.rounds.append(round_index)
         uids = []
         for _ in range(count):
             spec = self.groups.pop(0)
@@ -157,7 +159,7 @@ class _Dispatcher:
         return uids
 
 
-def _buffer(dispatcher, **active) -> ActiveSamplingReplayBuffer:
+def _buffer(dispatcher, observe_fn=None, **active) -> ActiveSamplingReplayBuffer:
     return ActiveSamplingReplayBuffer(
         trainer_mode="sync",
         trainer_config={},
@@ -169,6 +171,7 @@ def _buffer(dispatcher, **active) -> ActiveSamplingReplayBuffer:
         train_batch_size=2,
         gen_batch_size=1,
         dispatch_fn=dispatcher,
+        observe_fn=observe_fn,
         **active,
     )
 
@@ -292,3 +295,24 @@ def test_trainer_rejects_an_oversampled_first_round_above_engine_capacity():
     trainer = _trainer({"enable": True, "oversample": 2}, max_num_seqs=16)
     with pytest.raises(ValueError, match="needs 24 concurrent episodes"):
         trainer._build_replay_buffer()
+
+
+def test_buffer_numbers_rounds_and_reports_every_finished_group_in_dispatch_order(tq_init, partition_id):
+    groups = [[0.0, 0.0], "failure", [0.0, 1.0], [1.0, 1.0], [0.25, 0.75]]
+    dispatcher = _Dispatcher(partition_id, groups)
+    observed: list[list[tuple[str, list[float]]]] = []
+    buffer = _buffer(dispatcher, observe_fn=observed.append, active_max_rounds=3)
+    try:
+        buffer.sample(global_steps=1, partition_id=partition_id, batch_size=2)
+        assert dispatcher.rounds == [1, 2, 3]
+        uids = dispatcher.uids
+        # Failed groups are not observed; kept and rejected finished groups are.
+        assert observed == [
+            [(uids[0], [0.0, 0.0])],
+            [(uids[2], [0.0, 1.0]), (uids[3], [1.0, 1.0])],
+            [(uids[4], [0.25, 0.75])],
+        ]
+    finally:
+        keys = list(tq.kv_list(partition_id=partition_id).get(partition_id, {}).keys())
+        if keys:
+            tq.kv_clear(keys=keys, partition_id=partition_id)

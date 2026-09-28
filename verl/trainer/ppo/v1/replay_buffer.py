@@ -756,6 +756,7 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
         self,
         *args,
         dispatch_fn=None,
+        observe_fn=None,
         active_max_rounds: int = 10,
         active_oversample: int = 0,
         active_oversample_refill: int = 0,
@@ -779,6 +780,7 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
             oversample_refill=active_oversample_refill,
         )
         self.dispatch_fn = dispatch_fn
+        self.observe_fn = observe_fn
         self.active_max_rounds = active_max_rounds
         self.active_oversample = active_oversample
         self.active_oversample_refill = active_oversample_refill
@@ -792,7 +794,11 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
         return float(np.std(values, ddof=1)) > self.active_reward_std_epsilon
 
     def _classify_round(self, partition_id: str, round_uids: list[str]) -> list[str]:
-        """Return the kept uids of a finished round in dispatch order and evict the others."""
+        """Return the kept uids of a finished round in dispatch order and evict the others.
+
+        Every finished group of the round, kept or not, is first passed to ``observe_fn`` in dispatch
+        order (the evidence a prompt selector uses for the next round).
+        """
         finished = [uid for uid in round_uids if uid in self.finished_keys[partition_id]]
         trajectory_keys = [key for key in self.partitions[partition_id] if key.split("_")[0] in set(finished)]
         values: dict[str, list[float]] = defaultdict(list)
@@ -806,6 +812,8 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
                         f"Finished group {key.split('_')[0]} is missing active-sampling metric {self.active_metric!r}"
                     )
                 values[key.split("_")[0]].append(float(info[self.active_metric]))
+        if self.observe_fn is not None:
+            self.observe_fn([(uid, list(values[uid])) for uid in finished])
         kept = [uid for uid in finished if self._keeps_group(values[uid])]
         sizes = {len(values[uid]) for uid in kept}
         if len(sizes) > 1 or (self.group_size is not None and sizes and sizes != {self.group_size}):
@@ -829,7 +837,7 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
         last_debug_time = time.time()
         while (plan := rounds.next_round()) is not None:
             requested, round_size = plan
-            round_uids = list(self.dispatch_fn(round_size))
+            round_uids = list(self.dispatch_fn(round_size, round_index=rounds.rounds + 1))
             if len(round_uids) != round_size:
                 raise RuntimeError(f"active sampling dispatched {len(round_uids)} prompts, expected {round_size}")
             while True:

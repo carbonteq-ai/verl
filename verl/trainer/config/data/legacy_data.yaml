@@ -131,3 +131,16 @@ continuous_token:
 
 # Additional kwargs passed to multimodal processors/backends.
 mm_processor_kwargs: {}
+
+# Optional prompt selector (for example a curriculum) that chooses the prompts of every rollout
+# dispatch instead of the dataloader; see verl/trainer/ppo/v1/prompt_selector.py.
+prompt_selector:
+
+  # Importable "module.Class"; null uses the dataloader.
+  class_path: null
+
+  # Keyword arguments passed to the selector's constructor, after dataset=.
+  kwargs: {}
+
+  # Per-trajectory reward_extra_info value the selector observes for finished groups.
+  metric: seq_reward

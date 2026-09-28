@@ -71,6 +71,7 @@ from verl.trainer.ppo.utils import (
     need_reference_policy,
     need_teacher_policy,
 )
+from verl.trainer.ppo.v1.prompt_selector import PromptSelector, load_prompt_selector
 from verl.trainer.ppo.v1.replay_buffer import (
     DAPO_FILTERED_REWARD_COUNTS_KEY,
     ActiveSamplingReplayBuffer,
@@ -231,6 +232,7 @@ class PPOTrainer(ABC):
                     train_batch_size=self.config.data.train_batch_size,
                     gen_batch_size=1,
                     dispatch_fn=self._dispatch_prompts,
+                    observe_fn=self._observe_prompt_groups,
                     active_max_rounds=int(active_sampling.get("max_candidate_batches", 10)),
                     active_oversample=int(active_sampling.get("oversample", 0)),
                     active_oversample_refill=int(active_sampling.get("oversample_refill", 0)),
@@ -604,6 +606,8 @@ class PPOTrainer(ABC):
             f"parameter_sync_step ({self.parameter_sync_step})"
         )
         sample_batch_size = train_batch_size // self.parameter_sync_step
+        # Groups that failed or were never observed must not carry selector indices into the next step.
+        self._selected_prompt_indices = {}
 
         # Active sampling dispatches its own rounds from inside the replay buffer.
         if not isinstance(self.replay_buffer, ActiveSamplingReplayBuffer):
@@ -637,6 +641,10 @@ class PPOTrainer(ABC):
                 batch_size=sample_batch_size,
             )
             metrics.update(off_policy_metrics)
+            if getattr(self, "prompt_selector", None) is not None and not isinstance(
+                self.replay_buffer, ActiveSamplingReplayBuffer
+            ):
+                self._observe_sampled_batch(batch)
             batch.extra_info["temperature"] = self.config.actor_rollout_ref.rollout.temperature
             self.on_sample_end()
             metrics.update(self._consume_rollout_metrics())
@@ -807,6 +815,14 @@ class PPOTrainer(ABC):
             sampler=create_rl_sampler(self.config.data, self.train_dataset),
         )
         self.train_dataloader_it = None
+        self.prompt_selector: PromptSelector | None = load_prompt_selector(
+            self.config.data.get("prompt_selector", None), self.train_dataset
+        )
+        self._selected_prompt_indices: dict[str, int] = {}
+        if self.prompt_selector is not None and self.trainer_mode != "sync":
+            raise ValueError("data.prompt_selector requires trainer.v1.trainer_mode=sync")
+        if self.prompt_selector is not None and dapo_enabled:
+            raise ValueError("data.prompt_selector does not choose DAPO filter_groups refills; use active_sampling")
         self.val_dataloader = StatefulDataLoader(
             dataset=self.val_dataset,
             batch_size=self.config.data.val_batch_size or len(self.val_dataset),
@@ -953,6 +969,8 @@ class PPOTrainer(ABC):
             self.train_dataloader.load_state_dict(dataloader_state_dict)
         else:
             logger.warning(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
+        if self.prompt_selector is not None:
+            self.prompt_selector.load_checkpoint(global_step_folder)
 
         # 5. restore TransferQueue state (async modes). Re-issuing the restored in-flight prompts is
         # deferred to fit() to use the agent_loop_manager.
@@ -1052,6 +1070,8 @@ class PPOTrainer(ABC):
         local_mkdir_safe(local_global_step_folder)
         dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
         torch.save(self.train_dataloader.state_dict(), dataloader_local_path)
+        if self.prompt_selector is not None:
+            self.prompt_selector.save_checkpoint(local_global_step_folder)
 
         # save TransferQueue state for async modes so in-flight prompts (already fetched from the
         # dataloader but not yet trained into this checkpoint's weights) survive a restart:
@@ -1443,11 +1463,15 @@ class PPOTrainer(ABC):
         batch_dict["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch_dict["raw_prompt"]))], dtype=object)
         return tu.get_tensordict(batch_dict)
 
-    def _next_train_batch(self, num_prompts: int | None = None) -> TensorDict:
-        """Fetch and coalesce the requested number of prompts."""
+    def _next_train_batch(
+        self, num_prompts: int | None = None, *, stage: str = "initial_batch", round_index: int | None = None
+    ) -> TensorDict:
+        """Fetch and coalesce the requested number of prompts (from the prompt selector when configured)."""
         train_batch_size = self.config.data.train_batch_size
         if num_prompts is None:
             num_prompts = train_batch_size
+        if getattr(self, "prompt_selector", None) is not None:
+            return self._selected_train_batch(num_prompts, stage=stage, round_index=round_index)
         gen_batch_size = self.config.data.get("gen_batch_size", None) or train_batch_size
         if num_prompts <= 0 or num_prompts % gen_batch_size != 0:
             raise ValueError(
@@ -1478,11 +1502,54 @@ class PPOTrainer(ABC):
         self.agent_loop_manager.generate_sequences(batch)
         return len(batch)
 
-    def _dispatch_prompts(self, num_prompts: int) -> list[str]:
+    def _dispatch_prompts(self, num_prompts: int, round_index: int | None = None) -> list[str]:
         """Dispatch an exact number of fresh prompts and return their uids in dispatch order."""
-        batch = self._next_train_batch(num_prompts)
+        batch = self._next_train_batch(num_prompts, stage="active_sampling_refill", round_index=round_index)
         self._submit_batch_to_rollout(batch)
         return [str(uid) for uid in batch["uid"]]
+
+    def _selected_train_batch(self, num_prompts: int, *, stage: str, round_index: int | None) -> TensorDict:
+        """Build a dispatch from the dataset rows the prompt selector chooses."""
+        assert self.prompt_selector is not None
+        indices = [
+            int(index)
+            for index in self.prompt_selector.select(
+                num_prompts, global_steps=self.global_steps, stage=stage, round_index=round_index
+            )
+        ]
+        if len(indices) != num_prompts:
+            raise RuntimeError(f"prompt selector returned {len(indices)} prompts, expected {num_prompts}")
+        batch_dict = collate_fn([self.train_dataset[index] for index in indices])
+        uids = [str(uuid.uuid4()) for _ in indices]
+        batch_dict["uid"] = np.array(uids, dtype=object)
+        self._selected_prompt_indices.update(zip(uids, indices, strict=True))
+        batch = tu.get_tensordict(batch_dict)
+        tu.assign_non_tensor_data(batch, "global_steps", self.global_steps)
+        return batch
+
+    def _observe_prompt_groups(self, groups: list[tuple[str, list[float]]]) -> None:
+        """Forward finished groups' metric values to the prompt selector, keyed by dataset index."""
+        if getattr(self, "prompt_selector", None) is None:
+            return
+        assert self.prompt_selector is not None
+        observed = [(self._selected_prompt_indices.pop(uid), values) for uid, values in groups]
+        self.prompt_selector.observe(observed, global_steps=self.global_steps)
+
+    def _observe_sampled_batch(self, batch: KVBatchMeta) -> None:
+        """Observe the groups of a non-active-sampling step once its batch is sampled."""
+        uids = list(dict.fromkeys(key.split("_")[0] for key in batch.keys))
+        if not uids:
+            return
+        metric = self.config.data.prompt_selector.get("metric", "seq_reward")
+        data = tq.kv_batch_get(keys=batch.keys, partition_id=batch.partition_id, select_fields=["extra_fields"])
+        values: dict[str, list[float]] = {uid: [] for uid in uids}
+        for key, extra_fields in zip(batch.keys, list(data["extra_fields"]), strict=True):
+            extra_fields = getattr(extra_fields, "data", extra_fields)
+            info = extra_fields.get("reward_extra_info", {}) if isinstance(extra_fields, dict) else {}
+            if metric not in info:
+                raise RuntimeError(f"prompt selector metric {metric!r} is missing from trajectory {key}")
+            values[key.split("_")[0]].append(float(info[metric]))
+        self._observe_prompt_groups([(uid, values[uid]) for uid in uids])
 
     def _add_prompts_to_generate(self, num_prompts: int) -> int:
         """Add an exact number of prompts to the AgentLoopManager."""
