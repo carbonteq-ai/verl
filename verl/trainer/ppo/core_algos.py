@@ -276,6 +276,7 @@ def compute_grpo_outcome_advantage(
     config: Optional[AlgoConfig] = None,
     std_scope: str = "group",
     excluded: Optional[np.ndarray] = None,
+    trl_statistics: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Compute advantage for GRPO, operating only on Outcome reward
@@ -306,7 +307,7 @@ def compute_grpo_outcome_advantage(
             shape is (bs, response_length)
     """
     scores = token_level_rewards.sum(dim=-1)
-    if std_scope != "group" or excluded is not None:
+    if std_scope != "group" or excluded is not None or trl_statistics:
         advantages = _grpo_advantages_like_trl(
             scores,
             index,
@@ -370,8 +371,13 @@ def _grpo_advantages_like_trl(
         values[torch.as_tensor(np.asarray(excluded, dtype=bool), device=values.device)] = torch.nan
 
     def nanstd(tensor: torch.Tensor) -> torch.Tensor:
-        count = (~torch.isnan(tensor)).sum()
-        variance = torch.nanmean((tensor - torch.nanmean(tensor)) ** 2) * count / (count - 1)
+        # TRL's ``trl.trainer.utils.nanstd`` operation for operation, including its Bessel factor
+        # computed by integer true division (the default float dtype), so results match bitwise.
+        variance = torch.nanmean((tensor - torch.nanmean(tensor)) ** 2)
+        count = torch.sum(~torch.isnan(tensor))
+        correction = count / (count - 1)
+        correction = torch.where(count > 1, correction, torch.full_like(correction, float("nan")))
+        variance *= correction
         return torch.sqrt(variance)
 
     groups: dict[object, list[int]] = defaultdict(list)

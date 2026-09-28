@@ -194,7 +194,9 @@ def _grpo_scaling_kwargs(data: DataProto, config: Optional[AlgoConfig]) -> dict:
     kwargs: dict = {}
     if config is not None:
         if config.get("grpo_std_epsilon", None) is not None:
+            # Selecting TRL's epsilon selects TRL's statistics (nan-aware, TRL's Bessel factor).
             kwargs["epsilon"] = float(config.get("grpo_std_epsilon"))
+            kwargs["trl_statistics"] = True
         if config.get("grpo_std_scope", None) is not None:
             kwargs["std_scope"] = str(config.get("grpo_std_scope"))
     if "exclude_from_group_stats" in data.non_tensor_batch:
