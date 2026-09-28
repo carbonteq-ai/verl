@@ -20,6 +20,7 @@ from verl.base_config import BaseConfig
 __all__ = [
     "AlgoConfig",
     "FilterGroupsConfig",
+    "ActiveSamplingConfig",
     "KLControlConfig",
     "RolloutCorrectionConfig",
     "SampoConfig",
@@ -63,6 +64,33 @@ class FilterGroupsConfig(BaseConfig):
     metric: Optional[str] = None
     max_num_gen_batches: int = 0
     max_inflight_gen_batches: int = 1
+
+
+@dataclass
+class ActiveSamplingConfig(BaseConfig):
+    """Round-based active sampling for the synchronous V1 trainer (TRL GRPO semantics).
+
+    Each optimizer batch keeps ``data.train_batch_size`` prompt groups whose ``metric`` spread (sample
+    standard deviation) exceeds ``reward_std_epsilon``. Round one dispatches the batch plus
+    ``oversample`` groups; every later round dispatches only the missing groups plus
+    ``oversample_refill``, capped at the first round's size. At most ``max_candidate_batches`` rounds
+    and ``max_candidate_batches * train_batch_size`` candidate prompts are used per optimizer batch.
+
+    Args:
+        enable (bool): Whether to use active sampling instead of the streaming filter_groups path.
+        max_candidate_batches (int): Round limit and candidate-pool size in train-batch units.
+        oversample (int): Extra prompt groups in the first round.
+        oversample_refill (int): Extra prompt groups in each refill round.
+        reward_std_epsilon (float): Groups need a larger metric spread to be kept.
+        metric (str): Per-trajectory ``reward_extra_info`` value used for the spread.
+    """
+
+    enable: bool = False
+    max_candidate_batches: int = 10
+    oversample: int = 0
+    oversample_refill: int = 0
+    reward_std_epsilon: float = 0.0
+    metric: str = "seq_reward"
 
 
 @dataclass
@@ -681,6 +709,7 @@ class AlgoConfig(BaseConfig):
     use_pf_ppo: bool = False
     pf_ppo: dict[str, Any] = field(default_factory=dict)
     filter_groups: Optional[FilterGroupsConfig] = None
+    active_sampling: Optional[ActiveSamplingConfig] = None
     sampo: SampoConfig = field(default_factory=SampoConfig)
     # Rollout Correction: corrects off-policy issues (policy mismatch, model staleness, distribution shifts)
     # Set to None to disable, use RolloutCorrectionConfig presets (e.g., .tis(), .mis()), or pass dict

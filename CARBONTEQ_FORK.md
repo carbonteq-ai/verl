@@ -2,6 +2,12 @@
 
 ## Status
 
+**Unpublished candidate: round-based active sampling (branch
+`codex/vortex-active-sampling`, from the post5 receipt `9c10bd1a`).** Adds the
+`algorithm.active_sampling` block and `ActiveSamplingReplayBuffer` described
+under "Maintained delta". Phase 2 of Posttrain's
+`docs/plan/verl-vortex-port.md`; no release or tag yet.
+
 **Release candidate `0.9.0.post5`.** Post5 is the post4 release commit
 (`54124edf`) plus the token-clip policy loss and the unclipped k3 KL estimator
 described under "Maintained delta" (commit
@@ -116,6 +122,41 @@ The published release commit and index artifact hashes are recorded here only
 after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
+
+### Round-based active sampling in the synchronous V1 trainer (candidate)
+
+veRL's DAPO `filter_groups` path streams: every evicted group adds two refill
+credits and replacement prompts start while earlier ones still run. TRL's GRPO
+active sampling (CarbonTeq TRL 1.12.0.post11, used by the OLMo 3 / VORTEX and
+SAMPO recipes) works in rounds, and the consumer's curriculum contract needs a
+decision boundary per round, so the port needs TRL's round semantics.
+
+- `verl/trainer/config/algorithm.py` `ActiveSamplingConfig` and the
+  `algorithm.active_sampling` block in `ppo_trainer.yaml` (regenerated
+  `_generated_ppo_*trainer.yaml`): `enable`, `max_candidate_batches`,
+  `oversample`, `oversample_refill`, `reward_std_epsilon`, `metric`.
+- `verl/trainer/ppo/v1/replay_buffer.py`: `ActiveSamplingRounds` (TRL's round
+  arithmetic in prompt groups: round one `target + oversample`, later rounds
+  `missing + oversample_refill` capped at round one, extra groups cut to the
+  remaining pool of `max_candidate_batches * target`, pool exhaustion and
+  round exhaustion errors, TRL's `active_sampling/...` metric names and values,
+  including TRL's row-valued `candidate_groups_*` counters);
+  `ActiveSamplingReplayBuffer` dispatches each round through the trainer,
+  waits until every group of the round is terminal, keeps groups whose metric
+  sample standard deviation exceeds the epsilon, evicts the rest (failed groups
+  included), and keeps the first `train_batch_size` retained groups in dispatch
+  order; `active_sampling_round_capacity_error` checks that an oversampled
+  first round fits the rollout engines' `max_num_seqs`, the agent
+  `max_concurrent_episodes`, and workers x `max_concurrent_episodes_per_worker`.
+- `verl/trainer/ppo/v1/trainer_base.py`: selects the buffer when enabled (sync
+  mode, `parameter_sync_step=1`, not with a custom sampler or `filter_groups`),
+  runs the capacity check at startup, forces `data.gen_batch_size=1`, adds
+  `_dispatch_prompts` (returns uids in dispatch order), and lets the buffer own
+  the first dispatch of each step.
+
+CPU regression coverage: `tests/trainer/ppo/v1/test_active_sampling_on_cpu.py`.
+The side-by-side check against TRL's real `_prepare_active_sampling_inputs`
+lives in the consumer (Posttrain `packages/train/tests/test_verl_active_sampling_parity.py`).
 
 ### Token-clip policy loss and unclipped k3 KL (post5)
 
@@ -538,10 +579,11 @@ CPU regression coverage:
 
 ## Validation
 
-Post5 focused CPU validation:
+Post5 focused CPU validation (plus `tests/trainer/ppo/v1/` for active sampling):
 
 ```bash
 PYTHONPATH=$PWD python -m pytest -q \
+  tests/trainer/ppo/v1/ \
   tests/trainer/ppo/test_token_clip_policy_loss_on_cpu.py \
   tests/trainer/ppo/test_core_algos_on_cpu.py \
   tests/trainer/ppo/test_rollout_corr_integration.py

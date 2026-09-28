@@ -71,7 +71,13 @@ from verl.trainer.ppo.utils import (
     need_reference_policy,
     need_teacher_policy,
 )
-from verl.trainer.ppo.v1.replay_buffer import DAPO_FILTERED_REWARD_COUNTS_KEY, ReplayBuffer, ReplayBufferAsync
+from verl.trainer.ppo.v1.replay_buffer import (
+    DAPO_FILTERED_REWARD_COUNTS_KEY,
+    ActiveSamplingReplayBuffer,
+    ReplayBuffer,
+    ReplayBufferAsync,
+    active_sampling_round_capacity_error,
+)
 from verl.trainer.ppo.v1.utils import MetricsAggregator, compute_advantage_for_multi_trajectories
 from verl.utils import tensordict_utils as tu
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
@@ -183,8 +189,13 @@ class PPOTrainer(ABC):
         has_custom_sampler = bool(
             custom_sampler is not None and custom_sampler.get("path") and custom_sampler.get("name")
         )
+        active_sampling = self._active_sampling_config()
         if has_custom_sampler:
+            if active_sampling is not None:
+                raise ValueError("algorithm.active_sampling cannot be combined with a custom sampler")
             sampler_cls = load_extern_type(custom_sampler.path, custom_sampler.name)
+        elif active_sampling is not None:
+            sampler_cls = ActiveSamplingReplayBuffer
         else:
             sampler_cls = ReplayBuffer if self.trainer_mode == "sync" else ReplayBufferAsync
 
@@ -213,7 +224,20 @@ class PPOTrainer(ABC):
                 sync_refill_failed_groups=sync_refill_failed_groups,
                 refill_all_failed_groups=refill_all_failed_groups,
             )
-            if sampler_cls is ReplayBuffer:
+            if sampler_cls is ActiveSamplingReplayBuffer:
+                assert active_sampling is not None
+                self._check_active_sampling_capacity(active_sampling)
+                replay_buffer_kwargs.update(
+                    train_batch_size=self.config.data.train_batch_size,
+                    gen_batch_size=1,
+                    dispatch_fn=self._dispatch_prompts,
+                    active_max_rounds=int(active_sampling.get("max_candidate_batches", 10)),
+                    active_oversample=int(active_sampling.get("oversample", 0)),
+                    active_oversample_refill=int(active_sampling.get("oversample_refill", 0)),
+                    active_reward_std_epsilon=float(active_sampling.get("reward_std_epsilon", 0.0)),
+                    active_metric=str(active_sampling.get("metric", "seq_reward")),
+                )
+            elif sampler_cls is ReplayBuffer:
                 filter_groups = self.config.algorithm.get("filter_groups", None)
                 max_inflight_gen_batches = 1
                 max_num_gen_batches = 0
@@ -230,6 +254,36 @@ class PPOTrainer(ABC):
                     max_num_gen_batches=max_num_gen_batches,
                 )
         return sampler_cls(**replay_buffer_kwargs)
+
+    def _active_sampling_config(self):
+        """The enabled ``algorithm.active_sampling`` block, or ``None``."""
+        active_sampling = self.config.algorithm.get("active_sampling", None)
+        if active_sampling is None or not active_sampling.get("enable", False):
+            return None
+        if self.trainer_mode != "sync":
+            raise ValueError("algorithm.active_sampling requires trainer.v1.trainer_mode=sync")
+        if self.config.trainer.v1.get(self.trainer_mode, {}).get("parameter_sync_step", 1) != 1:
+            raise ValueError("algorithm.active_sampling fills one optimizer batch per parameter sync")
+        return active_sampling
+
+    def _check_active_sampling_capacity(self, active_sampling) -> None:
+        """Reject an oversampled first round that cannot run as one concurrent wave."""
+        rollout = self.config.actor_rollout_ref.rollout
+        agent = rollout.get("agent", {}) or {}
+        world = int(self.config.trainer.n_gpus_per_node) * int(self.config.trainer.nnodes)
+        replicas = max(world // int(rollout.get("tensor_model_parallel_size", 1) or 1), 1)
+        max_num_seqs = rollout.get("max_num_seqs", None)
+        per_worker = agent.get("max_concurrent_episodes_per_worker", None)
+        error = active_sampling_round_capacity_error(
+            train_batch_size=int(self.config.data.train_batch_size),
+            rollout_n=int(rollout.n),
+            oversample=int(active_sampling.get("oversample", 0)),
+            engine_max_num_seqs=int(max_num_seqs) * replicas if max_num_seqs is not None else None,
+            max_concurrent_episodes=agent.get("max_concurrent_episodes", None),
+            worker_slots=int(agent.get("num_workers", 1)) * int(per_worker) if per_worker is not None else None,
+        )
+        if error is not None:
+            raise ValueError(error)
 
     def _resolve_filter_groups_metric(self) -> str | None:
         """Resolve DAPO's group metric and verify that rollout computes it before sampling."""
@@ -551,7 +605,9 @@ class PPOTrainer(ABC):
         )
         sample_batch_size = train_batch_size // self.parameter_sync_step
 
-        self._add_batch_to_generate()
+        # Active sampling dispatches its own rounds from inside the replay buffer.
+        if not isinstance(self.replay_buffer, ActiveSamplingReplayBuffer):
+            self._add_batch_to_generate()
 
         metrics_aggregator = MetricsAggregator()
         combined_keys: list = []
@@ -721,8 +777,11 @@ class PPOTrainer(ABC):
             core_algos.AdvantageEstimator.SAMPO,
             "sampo",
         )
+        active_sampling = self.config.algorithm.get("active_sampling", None)
+        active_enabled = bool(active_sampling is not None and active_sampling.get("enable", False))
         requires_exact_refill = (
             self.trainer_mode != "sync"
+            or active_enabled
             or dapo_enabled
             or sync_refill_failed_groups
             or refill_all_failed_groups
@@ -1418,6 +1477,12 @@ class PPOTrainer(ABC):
 
         self.agent_loop_manager.generate_sequences(batch)
         return len(batch)
+
+    def _dispatch_prompts(self, num_prompts: int) -> list[str]:
+        """Dispatch an exact number of fresh prompts and return their uids in dispatch order."""
+        batch = self._next_train_batch(num_prompts)
+        self._submit_batch_to_rollout(batch)
+        return [str(uid) for uid in batch["uid"]]
 
     def _add_prompts_to_generate(self, num_prompts: int) -> int:
         """Add an exact number of prompts to the AgentLoopManager."""

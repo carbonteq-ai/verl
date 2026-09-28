@@ -837,6 +837,14 @@ algorithm:
     metric: null
     max_num_gen_batches: 0
     max_inflight_gen_batches: 1
+  active_sampling:
+    _target_: verl.trainer.config.ActiveSamplingConfig
+    enable: false
+    max_candidate_batches: 10
+    oversample: 0
+    oversample_refill: 0
+    reward_std_epsilon: 0.0
+    metric: seq_reward
   use_kl_in_reward: false
   kl_penalty: kl
   kl_ctrl:
