@@ -9,9 +9,20 @@ config" under "Maintained delta": since post2 the agent-loop manager read
 `agent.max_concurrent_episodes_per_worker` from the struct trainer config,
 but `rollout.yaml` never declared them, so any agent-loop run that did not
 override all three failed at start with `ConfigAttributeError`. No dependency
-change. Branch: `codex/agent-loop-config-defaults`. The wheel and sdist
-SHA-256 values of the retained assets are recorded in the receipt commit that
-follows the tag.
+change. Branch: `codex/agent-loop-config-defaults`.
+
+Its immutable release commit is
+`ef1c37715fa75de5973ae5b3c398383cd7e0093d`, tagged `carbonteq-v0.9.0.post8`
+(annotated tag object `3de3d2c7ae5eb3f4868679dac48c373de680d757`). Built from two clean clones with
+`SOURCE_DATE_EPOCH` set to the commit time (`1790632578`): the wheel is
+byte-identical across both builds and the two sdists have identical members
+and contents; the same procedure reproduces post7's published wheel
+byte-for-byte. Retained wheel `verl-0.9.0.post8-py3-none-any.whl` SHA-256:
+`9da6fb77815d66aa424ab71adfed4862be5291dd12f7a15df4da81d8ffcc0d08`; retained
+sdist `verl-0.9.0.post8.tar.gz` SHA-256:
+`ea34395aea7121f45e43045161830245e4239b0dd08495c9bf2a8f3438725cb1`. `twine
+check` passes for both. Published: GitHub release `carbonteq-v0.9.0.post8`
+(prerelease) and Posttrain retained-asset publisher run `36489415680`.
 
 **Release candidate `0.9.0.post7`.** Post7 is the post6 publication receipt
 (`100a0a88`) plus one fix, "LoRA tensor sync keeps constituent module names"
