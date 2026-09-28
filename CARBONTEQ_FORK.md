@@ -155,6 +155,18 @@ let veRL reproduce the ones upstream cannot express.
   `admission_loss_scale`), DAPO refills a dropped group like a filtered one.
 - Linear LR (`get_linear_schedule_with_warmup`, FSDP optimizer): Hugging Face's
   `lr_scheduler_type="linear"`.
+- Candidate-batch DAPO (`algorithm.filter_groups.candidate_batches`,
+  `CandidateBatchReplayBuffer`): TRL's `_prepare_dynamic_sampling_inputs`. Each
+  step reserves `max_num_gen_batches * train_batch_size` candidates (the next
+  dataloader prompts, or one prompt-selector `initial_batch` decision), then
+  dispatches whole candidate batches of `train_batch_size` in order, completes
+  each (admission retries in place), observes it, keeps groups with spread and
+  stops once the batch is full, keeping the first groups in candidate order.
+  The reward std of each candidate batch's admitted trajectories (TRL's
+  `nanstd`) is recorded per kept group and used for `grpo_std_scope=batch`.
+  Metrics: TRL's `dynamic_sampling/candidate_batches` and
+  `dynamic_sampling/retained_fraction`. The streaming DAPO refill remains the
+  default when the flag is off.
 
 CPU regression coverage: `tests/trainer/ppo/v1/test_trainer_base_on_cpu.py`,
 `tests/trainer/ppo/v1/test_replay_buffer_on_cpu.py`,

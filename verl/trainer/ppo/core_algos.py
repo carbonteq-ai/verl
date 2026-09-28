@@ -277,6 +277,7 @@ def compute_grpo_outcome_advantage(
     std_scope: str = "group",
     excluded: Optional[np.ndarray] = None,
     trl_statistics: bool = False,
+    row_std: Optional[np.ndarray] = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Compute advantage for GRPO, operating only on Outcome reward
@@ -315,6 +316,7 @@ def compute_grpo_outcome_advantage(
             normalize=norm_adv_by_std_in_grpo,
             std_scope=std_scope,
             epsilon=epsilon,
+            row_std=row_std,
         )
         advantages = advantages.unsqueeze(-1) * response_mask
         return advantages, advantages
@@ -355,6 +357,7 @@ def _grpo_advantages_like_trl(
     normalize: bool,
     std_scope: str,
     epsilon: float,
+    row_std: Optional[np.ndarray] = None,
 ) -> torch.Tensor:
     """TRL GRPOTrainer's advantages: excluded rows are NaN rewards (TRL's masked truncated completions).
 
@@ -391,6 +394,9 @@ def _grpo_advantages_like_trl(
             centered = group_values - torch.nanmean(group_values)
             if normalize:
                 std = batch_std if batch_std is not None else nanstd(group_values)
+                if std_scope == "batch" and row_std is not None:
+                    # The std of the candidate batch this group came from (TRL's DAPO populations).
+                    std = torch.tensor(float(row_std[rows[0]]), dtype=values.dtype, device=values.device)
                 centered = centered / (std + epsilon)
             advantages[rows] = torch.nan_to_num(centered, nan=0.0)
     return advantages

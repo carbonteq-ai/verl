@@ -64,6 +64,9 @@ class FilterGroupsConfig(BaseConfig):
     metric: Optional[str] = None
     max_num_gen_batches: int = 0
     max_inflight_gen_batches: int = 1
+    # CarbonTeq: TRL's DAPO dynamic sampling (whole candidate batches from a reserved pool, one
+    # round at a time, batch std taken per candidate batch) instead of the streaming refill.
+    candidate_batches: bool = False
 
 
 @dataclass

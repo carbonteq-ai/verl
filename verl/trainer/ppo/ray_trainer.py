@@ -201,6 +201,8 @@ def _grpo_scaling_kwargs(data: DataProto, config: Optional[AlgoConfig]) -> dict:
             kwargs["std_scope"] = str(config.get("grpo_std_scope"))
     if "exclude_from_group_stats" in data.non_tensor_batch:
         kwargs["excluded"] = data.non_tensor_batch["exclude_from_group_stats"]
+    if "grpo_row_std" in data.non_tensor_batch:
+        kwargs["row_std"] = data.non_tensor_batch["grpo_row_std"]
     return kwargs
 
 

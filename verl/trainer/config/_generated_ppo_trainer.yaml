@@ -843,6 +843,7 @@ algorithm:
     metric: null
     max_num_gen_batches: 0
     max_inflight_gen_batches: 1
+    candidate_batches: false
   grpo_std_epsilon: null
   grpo_std_scope: group
   exclude_flagged_rows: false

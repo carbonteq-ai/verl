@@ -913,3 +913,112 @@ class ActiveSamplingReplayBuffer(ReplayBuffer):
         if not any(key.split("_")[0] in set(selected) for key in partition_snapshot):
             raise RuntimeError("active sampling selected groups with no materializable trajectories")
         return self._materialize_batch(partition_id, selected, partition_snapshot), metrics
+
+
+def trl_nanstd(values: list[float]) -> float:
+    """``trl.trainer.utils.nanstd`` over a flat list, operation for operation (float64 values)."""
+    import torch
+
+    tensor = torch.tensor(values, dtype=torch.float64)
+    variance = torch.nanmean((tensor - torch.nanmean(tensor)) ** 2)
+    count = torch.sum(~torch.isnan(tensor))
+    correction = count / (count - 1)
+    correction = torch.where(count > 1, correction, torch.full_like(correction, float("nan")))
+    variance *= correction
+    return float(torch.sqrt(variance))
+
+
+class CandidateBatchReplayBuffer(ActiveSamplingReplayBuffer):
+    """TRL's DAPO dynamic sampling: whole candidate batches from a reserved pool until the batch fills.
+
+    Each optimizer batch reserves ``max_rounds * batch_size`` candidate prompts up front through
+    ``reserve_fn`` (the dataloader, or one prompt-selector decision). Candidate batches of exactly
+    ``batch_size`` prompts are dispatched in order; each is completed (failed groups are retried with
+    their prompt up to ``failed_group_attempts`` and otherwise dropped), observed, and filtered by
+    group spread. Sampling stops once ``batch_size`` groups are kept and keeps the first of them in
+    candidate order. The reward std of every admitted trajectory of a candidate batch is recorded
+    for its kept groups in ``candidate_std``: TRL's ``scale_rewards="batch"`` divides by it.
+    """
+
+    def __init__(self, *args, reserve_fn=None, rows_per_group: int = 1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rows_per_group = rows_per_group
+        if reserve_fn is None:
+            raise ValueError("candidate-batch dynamic sampling requires a reserve_fn")
+        self.reserve_fn = reserve_fn
+        self.candidate_std: dict[str, float] = {}
+
+    def _complete_round(self, partition_id: str, round_uids: list[str], last_debug_time: float) -> list[str]:
+        """Wait for a candidate batch, retrying failed groups in place; return admitted uids in order."""
+        attempts = {uid: 1 for uid in round_uids}
+        current = list(round_uids)
+        while True:
+            self._sync_metadata_from_transfer_queue()
+            failed = self.failure_keys[partition_id]
+            for position, uid in enumerate(current):
+                if uid is None or uid not in failed:
+                    continue
+                self._clear_groups(partition_id, {uid})
+                if self.retry_fn is not None and attempts[uid] < max(self.failed_group_attempts, 1):
+                    retried = self.retry_fn(uid)
+                    attempts[retried] = attempts[uid] + 1
+                    current[position] = retried
+                else:
+                    current[position] = None
+            pending = [uid for uid in current if uid is not None]
+            if all(uid in self.finished_keys[partition_id] for uid in pending):
+                return pending
+            last_debug_time = self._wait_for_next_poll(partition_id, last_debug_time)
+
+    @SkipManager.annotate_tq(role="rollout_tq", phase="sample")
+    def sample(self, global_steps: int, partition_id: str, batch_size: int) -> tuple[KVBatchMeta, dict]:
+        if partition_id == "val":
+            return ReplayBuffer.sample(self, global_steps, partition_id, batch_size)
+        self.reserve_fn(self.active_max_rounds * batch_size)
+        self.candidate_std = {}
+        retained: list[str] = []
+        candidate_rows = 0
+        batches_used = 0
+        last_debug_time = time.time()
+        for round_index in range(1, self.active_max_rounds + 1):
+            round_uids = list(self.dispatch_fn(batch_size, round_index=round_index))
+            admitted = self._complete_round(partition_id, round_uids, last_debug_time)
+            batches_used += 1
+            values = self._round_metric_values(partition_id, admitted)
+            # TRL counts a candidate batch with no admitted group at its scheduled size.
+            candidate_rows += (
+                sum(len(group) for group in values.values()) if admitted else len(round_uids) * self.rows_per_group
+            )
+            std = trl_nanstd([value for uid in admitted for value in values[uid]]) if admitted else float("nan")
+            kept = self._classify_round(partition_id, admitted)
+            for uid in kept:
+                self.candidate_std[uid] = std
+            retained.extend(kept)
+            if len(retained) >= batch_size:
+                break
+        if len(retained) < batch_size:
+            raise RuntimeError(
+                f"dynamic sampling exhausted {self.active_max_rounds} candidate batches before filling its "
+                f"generation batch; retained {len(retained)} of {batch_size} prompt groups"
+            )
+        self._sync_metadata_from_transfer_queue()
+        selected = retained[:batch_size]
+        self._clear_groups(partition_id, set(retained[batch_size:]))
+        group = self.group_size or self.rows_per_group
+        metrics = {
+            "dynamic_sampling/candidate_batches": batches_used,
+            "dynamic_sampling/retained_fraction": (len(retained) * group) / candidate_rows if candidate_rows else 0.0,
+        }
+        partition_snapshot = dict(self.partitions[partition_id])
+        return self._materialize_batch(partition_id, selected, partition_snapshot), metrics
+
+    def _round_metric_values(self, partition_id: str, uids: list[str]) -> dict[str, list[float]]:
+        keys = [key for key in self.partitions[partition_id] if key.split("_")[0] in set(uids)]
+        values: dict[str, list[float]] = defaultdict(list)
+        if keys:
+            data = tq.kv_batch_get(keys=keys, partition_id=partition_id, select_fields=["extra_fields"])
+            for key, extra_fields in zip(keys, list(data["extra_fields"]), strict=True):
+                extra_fields = getattr(extra_fields, "data", extra_fields)
+                info = extra_fields.get("reward_extra_info", {}) if isinstance(extra_fields, dict) else {}
+                values[key.split("_")[0]].append(float(info[self.active_metric]))
+        return values

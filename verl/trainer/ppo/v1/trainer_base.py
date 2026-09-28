@@ -75,6 +75,7 @@ from verl.trainer.ppo.v1.prompt_selector import PromptSelector, load_prompt_sele
 from verl.trainer.ppo.v1.replay_buffer import (
     DAPO_FILTERED_REWARD_COUNTS_KEY,
     ActiveSamplingReplayBuffer,
+    CandidateBatchReplayBuffer,
     ReplayBuffer,
     ReplayBufferAsync,
     active_sampling_round_capacity_error,
@@ -197,6 +198,8 @@ class PPOTrainer(ABC):
             sampler_cls = load_extern_type(custom_sampler.path, custom_sampler.name)
         elif active_sampling is not None:
             sampler_cls = ActiveSamplingReplayBuffer
+        elif self._candidate_batch_dynamic_sampling():
+            sampler_cls = CandidateBatchReplayBuffer
         else:
             sampler_cls = ReplayBuffer if self.trainer_mode == "sync" else ReplayBufferAsync
 
@@ -226,9 +229,31 @@ class PPOTrainer(ABC):
                 refill_all_failed_groups=refill_all_failed_groups,
             )
             attempts = int(sampler_config.get("failed_group_attempts", 0) or 0)
-            if attempts and sampler_cls is not ActiveSamplingReplayBuffer:
+            if attempts and not issubclass(sampler_cls, ActiveSamplingReplayBuffer):
                 replay_buffer_kwargs.update(retry_fn=self._retry_prompt, failed_group_attempts=attempts)
-            if sampler_cls is ActiveSamplingReplayBuffer:
+            if sampler_cls is CandidateBatchReplayBuffer:
+                filter_groups = self.config.algorithm.filter_groups
+                replay_buffer_kwargs.update(
+                    filter_groups_metric=None,
+                    sync_refill_failed_groups=False,
+                    refill_all_failed_groups=False,
+                    train_batch_size=self.config.data.train_batch_size,
+                    gen_batch_size=1,
+                    dispatch_fn=self._dispatch_reserved,
+                    reserve_fn=self._reserve_candidates,
+                    observe_fn=self._observe_prompt_groups,
+                    rows_per_group=int(self.config.actor_rollout_ref.rollout.n),
+                    active_max_rounds=int(filter_groups.get("max_num_gen_batches", 0) or 1),
+                    active_metric=str(filter_groups.metric),
+                    active_observe_metric=str(
+                        (self.config.data.get("prompt_selector", None) or {}).get("metric", None)
+                        or filter_groups.metric
+                    ),
+                )
+                attempts = int(sampler_config.get("failed_group_attempts", 0) or 0)
+                if attempts:
+                    replay_buffer_kwargs.update(retry_fn=self._retry_prompt, failed_group_attempts=attempts)
+            elif sampler_cls is ActiveSamplingReplayBuffer:
                 assert active_sampling is not None
                 self._check_active_sampling_capacity(active_sampling)
                 replay_buffer_kwargs.update(
@@ -263,6 +288,34 @@ class PPOTrainer(ABC):
                     max_num_gen_batches=max_num_gen_batches,
                 )
         return sampler_cls(**replay_buffer_kwargs)
+
+    def _candidate_batch_dynamic_sampling(self) -> bool:
+        filter_groups = self.config.algorithm.get("filter_groups", None)
+        enabled = bool(
+            filter_groups is not None and filter_groups.get("enable", False) and filter_groups.get("candidate_batches")
+        )
+        if enabled and self.trainer_mode != "sync":
+            raise ValueError("algorithm.filter_groups.candidate_batches requires trainer.v1.trainer_mode=sync")
+        return enabled
+
+    def _reserve_candidates(self, num_prompts: int) -> None:
+        """Reserve the step's candidate pool: one selector decision, or the next dataloader prompts."""
+        if getattr(self, "prompt_selector", None) is not None:
+            self._candidate_pool = self._selected_train_batch(num_prompts, stage="initial_batch", round_index=None)
+        else:
+            self._candidate_pool = self._next_train_batch(num_prompts)
+        self._candidate_cursor = 0
+
+    def _dispatch_reserved(self, num_prompts: int, round_index: int | None = None) -> list[str]:
+        """Dispatch the next ``num_prompts`` reserved candidates, in reservation order."""
+        del round_index
+        start = self._candidate_cursor
+        if start + num_prompts > len(self._candidate_pool):
+            raise RuntimeError("dynamic sampling exhausted its reserved candidate pool")
+        batch = tu.index_select_tensor_dict(self._candidate_pool, list(range(start, start + num_prompts)))
+        self._candidate_cursor += num_prompts
+        self._submit_batch_to_rollout(batch)
+        return [str(uid) for uid in batch["uid"]]
 
     def _active_sampling_config(self):
         """The enabled ``algorithm.active_sampling`` block, or ``None``."""
@@ -829,8 +882,11 @@ class PPOTrainer(ABC):
         self._selected_prompt_indices: dict[str, int] = {}
         if self.prompt_selector is not None and self.trainer_mode != "sync":
             raise ValueError("data.prompt_selector requires trainer.v1.trainer_mode=sync")
-        if self.prompt_selector is not None and dapo_enabled:
-            raise ValueError("data.prompt_selector does not choose DAPO filter_groups refills; use active_sampling")
+        if self.prompt_selector is not None and dapo_enabled and not filter_groups.get("candidate_batches", False):
+            raise ValueError(
+                "data.prompt_selector does not choose streaming DAPO refills; use "
+                "algorithm.filter_groups.candidate_batches or active_sampling"
+            )
         self.val_dataloader = StatefulDataLoader(
             dataset=self.val_dataset,
             batch_size=self.config.data.val_batch_size or len(self.val_dataset),
@@ -1496,6 +1552,9 @@ class PPOTrainer(ABC):
         """Dispatch the failed group's prompt again under a new uid (TRL's admission retry)."""
         row = self._dispatched_prompts.pop(failed_uid)
         retried = str(uuid.uuid4())
+        selected = getattr(self, "_selected_prompt_indices", {})
+        if failed_uid in selected:
+            selected[retried] = selected.pop(failed_uid)
         row["uid"] = [retried]
         tu.assign_non_tensor_data(row, "global_steps", self.global_steps)
         self._submit_batch_to_rollout(row)
@@ -1844,6 +1903,12 @@ class PPOTrainer(ABC):
             span_array[:] = spans
             data.non_tensor_batch["sampo_turn_spans"] = span_array
         data.non_tensor_batch["uid"] = np.array(materialized_uids, dtype=object)
+        candidate_std = getattr(getattr(self, "replay_buffer", None), "candidate_std", None)
+        if candidate_std and self.config.algorithm.get("grpo_std_scope", "group") == "batch":
+            # TRL's DAPO divides by the std of the candidate batch each group came from.
+            data.non_tensor_batch["grpo_row_std"] = np.array(
+                [candidate_std.get(key.split("_")[0], 1.0) for key in batch.keys], dtype=object
+            )
 
         # 1. apply kl penalty to rewards
         if self.config.algorithm.use_kl_in_reward:

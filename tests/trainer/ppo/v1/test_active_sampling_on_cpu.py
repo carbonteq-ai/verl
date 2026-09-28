@@ -332,3 +332,57 @@ def test_buffer_ignores_non_finite_values_like_trl_nan_rewards(tq_init, partitio
         keys = list(tq.kv_list(partition_id=partition_id).get(partition_id, {}).keys())
         if keys:
             tq.kv_clear(keys=keys, partition_id=partition_id)
+
+
+def _candidate_buffer(dispatcher, **options):
+    from verl.trainer.ppo.v1.replay_buffer import CandidateBatchReplayBuffer
+
+    reserved: list[int] = []
+    buffer = CandidateBatchReplayBuffer(
+        trainer_mode="sync",
+        trainer_config={},
+        max_off_policy_threshold=1,
+        max_off_policy_strategy="drop",
+        sampler_kwargs={},
+        poll_interval=POLL_INTERVAL,
+        refill_fn=lambda count: count,
+        train_batch_size=2,
+        gen_batch_size=1,
+        dispatch_fn=dispatcher,
+        reserve_fn=reserved.append,
+        rows_per_group=2,
+        **options,
+    )
+    return buffer, reserved
+
+
+def test_candidate_batches_have_the_target_size_and_record_their_std(tq_init, partition_id):
+    from verl.trainer.ppo.v1.replay_buffer import trl_nanstd
+
+    first = [[0.0, 0.0], [0.0, 1.0]]
+    second = [[1.0, 0.0], [0.5, 0.5]]
+    dispatcher = _Dispatcher(partition_id, first + second + [[0.0, 1.0]] * 2)
+    buffer, reserved = _candidate_buffer(dispatcher, active_max_rounds=3)
+    try:
+        batch, metrics = buffer.sample(global_steps=1, partition_id=partition_id, batch_size=2)
+        assert reserved == [6] and dispatcher.calls == [2, 2]
+        assert {key.split("_")[0] for key in batch.keys} == {dispatcher.uids[1], dispatcher.uids[2]}
+        assert buffer.candidate_std[dispatcher.uids[1]] == trl_nanstd([0.0, 0.0, 0.0, 1.0])
+        assert buffer.candidate_std[dispatcher.uids[2]] == trl_nanstd([1.0, 0.0, 0.5, 0.5])
+        assert metrics == {"dynamic_sampling/candidate_batches": 2, "dynamic_sampling/retained_fraction": 0.5}
+    finally:
+        keys = list(tq.kv_list(partition_id=partition_id).get(partition_id, {}).keys())
+        if keys:
+            tq.kv_clear(keys=keys, partition_id=partition_id)
+
+
+def test_candidate_batches_fail_after_the_reserved_rounds(tq_init, partition_id):
+    dispatcher = _Dispatcher(partition_id, [[1.0, 1.0]] * 4)
+    buffer, _ = _candidate_buffer(dispatcher, active_max_rounds=2)
+    try:
+        with pytest.raises(RuntimeError, match="exhausted 2 candidate batches"):
+            buffer.sample(global_steps=1, partition_id=partition_id, batch_size=2)
+    finally:
+        keys = list(tq.kv_list(partition_id=partition_id).get(partition_id, {}).keys())
+        if keys:
+            tq.kv_clear(keys=keys, partition_id=partition_id)

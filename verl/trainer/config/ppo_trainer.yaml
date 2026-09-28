@@ -109,6 +109,9 @@ algorithm:
     # Maximum Sync DAPO prompt batches concurrently in flight, measured in train-batch units
     max_inflight_gen_batches: 1
 
+    # CarbonTeq: TRL's candidate-batch dynamic sampling instead of the streaming refill (sync trainer)
+    candidate_batches: False
+
   # CarbonTeq: epsilon added to the GRPO std divisor (null keeps 1e-6)
   grpo_std_epsilon: null
 
