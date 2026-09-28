@@ -2,24 +2,33 @@
 
 ## Status
 
-**Unpublished candidate: VORTEX objective (branch `codex/vortex`).** Post4
-plus the OLMo 3 / DAPO token-clip policy loss and the unclipped k3 KL
-estimator described under "Maintained delta". It is the first step of
-Posttrain's plan `docs/plan/verl-vortex-port.md` (port of the VORTEX recipe
-and SAMPO to veRL); later steps add active sampling and a curriculum
-extension point to this branch. No release, tag or pin exists yet.
+**Release candidate `0.9.0.post5`.** Post5 is the post4 release commit
+(`54124edf`) plus the token-clip policy loss and the unclipped k3 KL estimator
+described under "Maintained delta" (commit
+`a4d84ad30b94c11c4de41b3d915eca6399ad2b6a`). It changes no dependency and no
+existing loss or KL mode. It fixes a live consumer bug: Posttrain already
+selects `policy_loss.loss_mode=token_clip` and `kl_loss_type=k3_unclipped` for
+GDPO and CAPO, and post4 registers neither, so those runs failed at the first
+actor update. It also provides the OLMo 3 objective for Posttrain's VORTEX
+port (`docs/plan/verl-vortex-port.md`). Branch: `codex/vortex`, tagged
+`carbonteq-v0.9.0.post5` at this release commit. The wheel and sdist SHA-256
+values of the retained assets are recorded in the receipt commit that follows
+the tag.
 
-**Release candidate `0.9.0.post4`.** Post4 is post3 (`18338a0e`, through its
+**Release candidate `0.9.0.post4`.** Its immutable release commit is
+`54124edfb8d0b73694696400cf07a76a14d9be65`, tagged `carbonteq-v0.9.0.post4`;
+retained wheel SHA-256
+`1e5e5a50c14ec486019421ca06de03fbbc24010f850f5e66f2d731469a8f8eb0`, retained
+sdist SHA-256
+`8620646c250e85a0dee984d360a4c102e97a4776d5711accea8eb66a743445e5` (recorded
+by receipt commit `39622a5e` on `codex/precision-fp16`). Post4 is post3 (`18338a0e`, through its
 publication receipt `78266f97`) plus fp16 training evidence from the FSDP
 engine's existing loss scaling (`actor/loss_scale` and
 `actor/optimizer_step_skipped` per optimizer step) and the per-token
 rollout-versus-actor log-probability gap
 (`training/rollout_logp_diff_{mean,p99,max}`,
 `training/rollout_seq_logp_diff_abs_mean`). It changes no training behavior and
-no dependency, including the `vllm` extra. Branch: `codex/precision-fp16`,
-tagged `carbonteq-v0.9.0.post4` at this release commit. The wheel and sdist
-SHA-256 values of the retained assets are recorded in the receipt commit that
-follows the tag.
+no dependency, including the `vllm` extra. Branch: `codex/precision-fp16`.
 
 **Release candidate `0.9.0.post3`.** Post3 retains the post2 runtime and updates
 the `vllm` extra to the exact CarbonTeq Uno source-overlay commit
@@ -98,7 +107,7 @@ after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
 
-### Token-clip policy loss and unclipped k3 KL (candidate, `codex/vortex`)
+### Token-clip policy loss and unclipped k3 KL (post5)
 
 Upstream's `vanilla` PPO loss is not the loss TRL's GRPO trainer computes for
 the OLMo 3 and DAPO recipes: it applies dual clipping (a negative-advantage
@@ -127,6 +136,18 @@ gradient, no dual clip, rollout-correction weights, global token
 normalization, non-finite rejection, unclipped k3 value and gradient). The
 cross-backend equivalence test lives in the consumer:
 Posttrain `packages/train/tests/test_verl_olmo3_parity.py`.
+
+Build post5 from the tagged commit exactly as post4 was built (the wheel is
+byte-reproducible; the sdist archive carries build times, so the retained
+release asset is the authority for its hash):
+
+```bash
+git clone --branch carbonteq-v0.9.0.post5 https://github.com/carbonteq-ai/verl.git verl-post5
+cd verl-post5
+SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" uv build --out-dir dist
+sha256sum dist/verl-0.9.0.post5-py3-none-any.whl dist/verl-0.9.0.post5.tar.gz
+uvx twine check dist/*
+```
 
 Stable-base candidate evidence (2026-09-06): 151 focused CPU tests passed.
 Coverage includes core algorithms, REINFORCE++ credit, SAMPO routing and V1
@@ -507,7 +528,7 @@ CPU regression coverage:
 
 ## Validation
 
-VORTEX candidate focused CPU validation:
+Post5 focused CPU validation:
 
 ```bash
 PYTHONPATH=$PWD python -m pytest -q \
