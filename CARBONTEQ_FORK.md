@@ -14,6 +14,15 @@ tagged `carbonteq-v0.9.0.post4` at this release commit. The wheel and sdist
 SHA-256 values of the retained assets are recorded in the receipt commit that
 follows the tag.
 
+Its immutable release commit is
+`54124edfb8d0b73694696400cf07a76a14d9be65`, tagged
+`carbonteq-v0.9.0.post4`. Retained wheel SHA-256:
+`1e5e5a50c14ec486019421ca06de03fbbc24010f850f5e66f2d731469a8f8eb0`;
+retained sdist SHA-256:
+`8620646c250e85a0dee984d360a4c102e97a4776d5711accea8eb66a743445e5`.
+The GitHub release and the Posttrain retained-asset publisher
+(`publish-verl-internal.yml`) are pending.
+
 **Release candidate `0.9.0.post3`.** Post3 retains the post2 runtime and updates
 the `vllm` extra to the exact CarbonTeq Uno source-overlay commit
 `37706e7d920abc97c705ffecee0919d64ef31485`, released as
