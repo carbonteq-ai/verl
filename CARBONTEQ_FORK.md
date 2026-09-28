@@ -2,6 +2,13 @@
 
 ## Status
 
+**Unpublished candidate: VORTEX objective (branch `codex/vortex`).** Post4
+plus the OLMo 3 / DAPO token-clip policy loss and the unclipped k3 KL
+estimator described under "Maintained delta". It is the first step of
+Posttrain's plan `docs/plan/verl-vortex-port.md` (port of the VORTEX recipe
+and SAMPO to veRL); later steps add active sampling and a curriculum
+extension point to this branch. No release, tag or pin exists yet.
+
 **Release candidate `0.9.0.post4`.** Post4 is post3 (`18338a0e`, through its
 publication receipt `78266f97`) plus fp16 training evidence from the FSDP
 engine's existing loss scaling (`actor/loss_scale` and
@@ -90,6 +97,36 @@ The published release commit and index artifact hashes are recorded here only
 after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
+
+### Token-clip policy loss and unclipped k3 KL (candidate, `codex/vortex`)
+
+Upstream's `vanilla` PPO loss is not the loss TRL's GRPO trainer computes for
+the OLMo 3 and DAPO recipes: it applies dual clipping (a negative-advantage
+token's loss is capped at `-A * clip_ratio_c`) and clamps the log ratio to
+[-20, 20], and upstream's `low_var_kl`/`k3` KL clamps the estimate to
+[-10, 10]. A consumer that selects the OLMo 3 recipe must get the same
+objective on both backends.
+
+- `verl/trainer/ppo/core_algos.py` registers policy loss `token_clip`:
+  `max(-A * r, -A * clip(r, 1 - clip_ratio_low, 1 + clip_ratio_high))` per
+  sampled token with `r = exp(log_prob - old_log_prob)`, multiplied by the
+  rollout-correction weights when present and aggregated with `agg_loss` and
+  the actor's global batch information. It raises on a non-finite ratio.
+- `kl_penalty_forward(..., "k3_unclipped")` returns
+  `expm1(ref - logp) - (ref - logp)` without clamping.
+
+Both names match the unpublished GDPO/CAPO candidate in the
+`codex/gdpo-capo-support` worktree so the two deltas converge to one
+implementation when merged. Posttrain selects them for OLMo 3 (and already
+selects them for GDPO/CAPO). Keep them until upstream offers a clip mode
+without dual clipping and an unclamped k3 estimator.
+
+CPU regression coverage:
+`tests/trainer/ppo/test_token_clip_policy_loss_on_cpu.py` (TRL formula and
+gradient, no dual clip, rollout-correction weights, global token
+normalization, non-finite rejection, unclipped k3 value and gradient). The
+cross-backend equivalence test lives in the consumer:
+Posttrain `packages/train/tests/test_verl_olmo3_parity.py`.
 
 Stable-base candidate evidence (2026-09-06): 151 focused CPU tests passed.
 Coverage includes core algorithms, REINFORCE++ credit, SAMPO routing and V1
@@ -469,6 +506,16 @@ CPU regression coverage:
   unqualified until the consuming framework's DAPO and SAMPO GPU gates pass.
 
 ## Validation
+
+VORTEX candidate focused CPU validation:
+
+```bash
+PYTHONPATH=$PWD python -m pytest -q \
+  tests/trainer/ppo/test_token_clip_policy_loss_on_cpu.py \
+  tests/trainer/ppo/test_core_algos_on_cpu.py \
+  tests/trainer/ppo/test_rollout_corr_integration.py
+ruff check verl/trainer/ppo/core_algos.py tests/trainer/ppo/test_token_clip_policy_loss_on_cpu.py
+```
 
 Post4 candidate focused CPU validation:
 

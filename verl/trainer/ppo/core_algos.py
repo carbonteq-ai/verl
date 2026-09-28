@@ -1540,6 +1540,50 @@ def compute_policy_loss_vanilla(
     return pg_loss, pg_metrics
 
 
+@register_policy_loss("token_clip")  # type: ignore[arg-type]
+def compute_policy_loss_token_clip(
+    old_log_prob: torch.Tensor,
+    log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    response_mask: torch.Tensor,
+    loss_agg_mode: str = "token-mean",
+    config: Optional[ActorConfig] = None,
+    rollout_is_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Standard asymmetric PPO token clipping, without dual clipping or log-ratio capping.
+
+    ``loss = max(-A * r, -A * clip(r, 1 - clip_ratio_low, 1 + clip_ratio_high))`` per sampled token, with
+    ``r = exp(log_prob - old_log_prob)``. Unlike ``vanilla`` it never caps a negative-advantage token's loss at
+    ``-A * clip_ratio_c`` and never clamps the log ratio, which makes it the objective of the OLMo 3 / DAPO
+    recipes as implemented by TRL's GRPO trainer. Optional rollout-correction weights multiply the per-token
+    loss before aggregation. KL is added separately by the actor's KL-loss path.
+    """
+    if config is None:
+        raise ValueError("token_clip requires actor configuration")
+    assert not isinstance(config, AlgoConfig)
+    mask = response_mask.bool()
+    delta = torch.where(mask, log_prob - old_log_prob, torch.zeros_like(log_prob))
+    ratio = torch.exp(delta)
+    if not torch.isfinite(ratio[mask]).all():
+        raise ValueError("token_clip sampled-token importance ratio is non-finite")
+    lower = config.clip_ratio_low if config.clip_ratio_low is not None else config.clip_ratio
+    upper = config.clip_ratio_high if config.clip_ratio_high is not None else config.clip_ratio
+    unclipped = -advantages * ratio
+    clipped = -advantages * torch.clamp(ratio, 1 - lower, 1 + upper)
+    pg_losses = torch.maximum(unclipped, clipped)
+    if rollout_is_weights is not None:
+        pg_losses = pg_losses * rollout_is_weights
+    pg_loss = agg_loss(
+        loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode, **config.global_batch_info
+    )
+    pg_metrics = {
+        "actor/pg_clipfrac": verl_F.masked_mean(torch.gt(clipped, unclipped).float(), response_mask).detach().item(),
+        "actor/ppo_kl": verl_F.masked_mean(-delta, response_mask).detach().item(),
+        "actor/pg_clipfrac_lower": 0.0,
+    }
+    return pg_loss, pg_metrics
+
+
 @register_policy_loss("dppo_tv")
 def compute_policy_loss_dppo_tv(
     old_log_prob: torch.Tensor,
@@ -2399,6 +2443,12 @@ def kl_penalty_forward(logprob: torch.FloatTensor, ref_logprob: torch.FloatTenso
 
     # J. Schulman. Approximating kl divergence, 2020.
     # # URL http://joschu.net/blog/kl-approx.html.
+    if kl_penalty == "k3_unclipped":
+        # The k3 estimator exactly as TRL's GRPO trainer computes it: no clamp on the
+        # log ratio or on the estimate, so large policy drift is penalized in full.
+        delta = ref_logprob - logprob
+        return torch.expm1(delta) - delta
+
     if kl_penalty in ("low_var_kl", "k3"):
         kl = ref_logprob - logprob
         # For numerical stability
