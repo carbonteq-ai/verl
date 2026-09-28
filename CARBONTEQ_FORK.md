@@ -8,9 +8,19 @@ under "Maintained delta": veRL's in-memory LoRA sync to vLLM renamed stacked
 constituents (`q_proj`/`k_proj`/`v_proj`, LFM2's `w1`/`w3`) onto one module, so
 any LoRA on a packed vLLM layer failed at the first weight sync. It blocks
 LFM2.5 on veRL (Posttrain `docs/plan/verl-vortex-port.md`, Phase 4). No
-dependency change. Branch: `codex/vortex-lora-sync`. The wheel and sdist
-SHA-256 values of the retained assets are recorded in the receipt commit that
-follows the tag.
+dependency change. Branch: `codex/vortex-lora-sync`.
+
+Its immutable release commit is
+`6069abe14e2b3d27c89815a6502b849f15124e12`, tagged `carbonteq-v0.9.0.post7`
+(annotated tag object `b60890dc0f453a975111e83318e35281e10d6d77`). Built from two clean clones with
+`SOURCE_DATE_EPOCH` set to the commit time (`1790629033`): the wheel is
+byte-identical across both builds and the two sdists have identical members.
+Retained wheel `verl-0.9.0.post7-py3-none-any.whl` SHA-256:
+`9786ec44fbdba367791d8e9a4c58a895955639c79c4b9dd0e3a403a05b5e29c5`; retained
+sdist `verl-0.9.0.post7.tar.gz` SHA-256:
+`3b0259523476d67aff9282b2b3c775c081bd866c04d369ad7a5eda8af6607088`. `twine
+check` passes for both. The branch push, tag push, GitHub release and the
+Posttrain retained-asset publisher (`publish-verl-internal.yml`) are pending.
 
 **Release candidate `0.9.0.post6`.** Post6 is the post5 asset receipt
 (`9c10bd1a`) plus the VORTEX and SAMPO deltas of Posttrain's
