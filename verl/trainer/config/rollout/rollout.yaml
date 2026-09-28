@@ -241,6 +241,15 @@ agent:
   # Number of agent loop workers
   num_workers: 8
 
+  # Ray CPU reservation for each agent-loop worker (resource accounting, not CPU affinity)
+  num_cpus_per_worker: 1.0
+
+  # Ceiling on concurrently active episodes in each agent-loop worker; null keeps unbounded fan-out
+  max_concurrent_episodes_per_worker: null
+
+  # Optional collection-wide episode ceiling; requires max_concurrent_episodes_per_worker
+  max_concurrent_episodes: null
+
   # default agent loop to use if `agent_name` not set in RL dataset
   default_agent_loop: single_turn_agent
 

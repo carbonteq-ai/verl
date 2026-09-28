@@ -2,6 +2,17 @@
 
 ## Status
 
+**Release candidate `0.9.0.post8`.** Post8 is the post7 asset receipt
+(`07ecac23`) plus one fix, "Agent-loop defaults declared in the trainer
+config" under "Maintained delta": since post2 the agent-loop manager read
+`agent.num_cpus_per_worker`, `agent.max_concurrent_episodes` and
+`agent.max_concurrent_episodes_per_worker` from the struct trainer config,
+but `rollout.yaml` never declared them, so any agent-loop run that did not
+override all three failed at start with `ConfigAttributeError`. No dependency
+change. Branch: `codex/agent-loop-config-defaults`. The wheel and sdist
+SHA-256 values of the retained assets are recorded in the receipt commit that
+follows the tag.
+
 **Release candidate `0.9.0.post7`.** Post7 is the post6 publication receipt
 (`100a0a88`) plus one fix, "LoRA tensor sync keeps constituent module names"
 under "Maintained delta": veRL's in-memory LoRA sync to vLLM renamed stacked
@@ -169,6 +180,25 @@ The published release commit and index artifact hashes are recorded here only
 after the candidate is committed, pushed, built once, and read back.
 
 ## Maintained delta
+
+### Agent-loop defaults declared in the trainer config (post8)
+
+"Bounded agent-loop episode admission" (post2) added `num_cpus_per_worker`,
+`max_concurrent_episodes_per_worker` and `max_concurrent_episodes` to
+`AgentLoopConfig`, and `AgentLoopManager.__init__` and `AgentLoopWorker` read
+them as attributes of the Hydra struct config. `rollout/rollout.yaml` did not
+declare them, so the composed config had no such keys and a run that did not
+pass all three as overrides failed before its first rollout
+(`omegaconf.errors.ConfigAttributeError: Key 'num_cpus_per_worker' is not in
+struct`). `rollout.yaml` now declares them with the dataclass defaults (1.0,
+null, null: one reserved CPU per worker and unbounded fan-out, the pre-post2
+behaviour), and the four `_generated_*` reference configs are regenerated.
+Found by Posttrain qualification `q0412h-verl-qwen08b-bf16-r1` (a veRL job
+with no `rollout_execution`). Regression test
+`test_default_trainer_config_declares_every_agent_loop_field` in
+`tests/experimental/agent_loop/test_episode_capacity_on_cpu.py` composes the
+default `ppo_trainer` config, requires every `AgentLoopConfig` field the
+manager reads, and fails on post7.
 
 ### LoRA tensor sync keeps constituent module names (post7)
 

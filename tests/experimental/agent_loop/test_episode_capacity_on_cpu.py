@@ -67,3 +67,30 @@ def test_worker_episode_gate_limits_concurrent_agent_loops() -> None:
         assert peak_active == 2
 
     asyncio.run(run())
+
+
+def test_default_trainer_config_declares_every_agent_loop_field() -> None:
+    """The agent-loop manager reads these keys from the struct config, so a
+    trainer launched without overrides must find each one declared."""
+    import dataclasses
+    import os
+
+    from hydra import compose, initialize_config_dir
+
+    from verl.workers.config import AgentLoopConfig
+
+    config_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "verl", "trainer", "config")
+    )
+    with initialize_config_dir(config_dir=config_dir, version_base=None):
+        config = compose(config_name="ppo_trainer")
+    agent = config.actor_rollout_ref.rollout.agent
+    declared = set(agent.keys())
+    required = {f.name for f in dataclasses.fields(AgentLoopConfig)} - {"agent_loop_manager_class"}
+    assert required <= declared, sorted(required - declared)
+    validate_agent_loop_episode_capacity(
+        num_workers=agent.num_workers,
+        num_cpus_per_worker=agent.num_cpus_per_worker,
+        max_concurrent_episodes=agent.max_concurrent_episodes,
+        max_concurrent_episodes_per_worker=agent.max_concurrent_episodes_per_worker,
+    )

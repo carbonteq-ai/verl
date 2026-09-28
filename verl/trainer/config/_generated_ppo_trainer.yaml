@@ -328,6 +328,9 @@ actor_rollout_ref:
     agent:
       _target_: verl.workers.config.AgentLoopConfig
       num_workers: 8
+      num_cpus_per_worker: 1.0
+      max_concurrent_episodes_per_worker: null
+      max_concurrent_episodes: null
       default_agent_loop: single_turn_agent
       agent_loop_config_path: null
       custom_async_server:
