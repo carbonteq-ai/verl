@@ -2,6 +2,22 @@
 
 ## Status
 
+Native padded-engine repair candidate (2026-10-01): eager/SDPA execution
+must not require the optional FlashAttention package just for indexing.
+When that package is absent, attention_utils reuses the existing Torch
+padding implementation; broken transitive imports still propagate.
+Padded Qwen3.5 without sequence parallelism or fused kernels retains the
+native Transformers forward instead of the legacy packed replacement.
+The latter expects attributes absent from newer Transformers models.
+Four padding-fallback checks, eight retained padding checks and two Qwen
+forward-selection regressions pass. A real single-rank FSDP1 Qwen0.8B
+BF16 probe loads FP32 masters, computes in BF16, applies two native AdamW
+updates and passes four independent loss checks. FP16 scale1 also applies
+updates in this token fixture, while scales128/1024 can overflow. Broader
+native masks/gradients/optimizer-oracle checks are recorded in Posttrain.
+No released runtime adoption, distributed qualification or packed-path
+compatibility with newer Transformers is implied.
+
 Finer KL transition correction (2026-10-01): a shared represented-input
 Decimal80 sweep finds 268/2332 failures around the candidate's 0.05 boundary
 at relative tolerance 1e-6. TRL and veRL agree, exposing why parity alone is

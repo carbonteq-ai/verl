@@ -521,15 +521,16 @@ def apply_monkey_patch(
             qwen3_5_gated_delta_net_forward,
         )
 
-        Qwen3_5Model.forward = qwen3_5_base_forward
-        Qwen3_5MoeModel.forward = qwen3_5_base_forward
-        Qwen3_5DecoderLayer.forward = qwen3_5_decoder_layer_forward
-        Qwen3_5MoeDecoderLayer.forward = qwen3_5_decoder_layer_forward
-        Qwen3_5GatedDeltaNet.forward = qwen3_5_gated_delta_net_forward
-        Qwen3_5MoeGatedDeltaNet.forward = qwen3_5_gated_delta_net_forward
-        Qwen3_5ForConditionalGeneration.forward = forward_with_normal_backend
-        Qwen3_5MoeForConditionalGeneration.forward = forward_with_normal_backend
-        print(f"Monkey patch {model.__class__.__name__} model forward")
+        if use_remove_padding or ulysses_sp_size > 1 or use_fused_kernels:
+            Qwen3_5Model.forward = qwen3_5_base_forward
+            Qwen3_5MoeModel.forward = qwen3_5_base_forward
+            Qwen3_5DecoderLayer.forward = qwen3_5_decoder_layer_forward
+            Qwen3_5MoeDecoderLayer.forward = qwen3_5_decoder_layer_forward
+            Qwen3_5GatedDeltaNet.forward = qwen3_5_gated_delta_net_forward
+            Qwen3_5MoeGatedDeltaNet.forward = qwen3_5_gated_delta_net_forward
+            Qwen3_5ForConditionalGeneration.forward = forward_with_normal_backend
+            Qwen3_5MoeForConditionalGeneration.forward = forward_with_normal_backend
+            print(f"Monkey patch {model.__class__.__name__} model forward")
 
         # Step 2: patch vision model to fix fsdp2 cpu_offload bug.
         Qwen3_5VisionModel.fast_pos_embed_interpolate = fast_pos_embed_interpolate
