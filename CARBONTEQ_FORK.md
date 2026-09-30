@@ -2,6 +2,16 @@
 
 ## Status
 
+Finer KL transition correction (2026-10-01): a shared represented-input
+Decimal80 sweep finds 268/2332 failures around the candidate's 0.05 boundary
+at relative tolerance 1e-6. TRL and veRL agree, exposing why parity alone is
+insufficient. A tenth-order polynomial through absolute delta 0.25 removes
+the remaining cancellation; truncation is below 2e-12 relative in exact
+arithmetic. The expanded 3880-case sweep passes, including immediate typed
+neighbors of 0.01, 0.05 and 0.25. The dedicated math/hierarchy slice passes
+87 tests after adding twenty half-input regressions. This remains a source
+candidate without release assets, production mapping or pin adoption.
+
 **Unpublished Posttrain math parity candidate.** Isolated branch
 `codex/posttrain-math-parity` starts from runtime-pinned
 `ef1c37715fa75de5973ae5b3c398383cd7e0093d`. No release version, asset,

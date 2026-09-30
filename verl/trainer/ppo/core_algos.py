@@ -2625,10 +2625,23 @@ def kl_penalty_forward(logprob: torch.FloatTensor, ref_logprob: torch.FloatTenso
         current = logprob.float() if logprob.dtype in (torch.float16, torch.bfloat16) else logprob
         reference = ref_logprob.float() if ref_logprob.dtype in (torch.float16, torch.bfloat16) else ref_logprob
         delta = reference - current
-        small = delta.abs() <= 0.05
+        small = delta.abs() <= 0.25
         # Bound the unused polynomial input: where evaluates both branches.
         x = delta.masked_fill(~small, 0.0)
-        series = x.square() * (0.5 + x * (1 / 6 + x * (1 / 24 + x * (1 / 120 + x / 720))))
+        # Tenth-order expansion keeps truncation below 2e-12 relative here;
+        # the wider interval also avoids expm1 backward's exp(x)-1 cancellation.
+        series = x.square() * (
+            0.5
+            + x
+            * (
+                1 / 6
+                + x
+                * (
+                    1 / 24
+                    + x * (1 / 120 + x * (1 / 720 + x * (1 / 5040 + x * (1 / 40320 + x * (1 / 362880 + x / 3628800)))))
+                )
+            )
+        )
         return torch.where(small, series, torch.expm1(delta) - delta)
 
     if kl_penalty in ("low_var_kl", "k3"):

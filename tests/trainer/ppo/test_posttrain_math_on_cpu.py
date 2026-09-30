@@ -65,7 +65,14 @@ def test_k3_large_delta_keeps_finite_gradient_when_value_is_finite():
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("delta", [-0.01, -0.0001, -0.000001, 0.000001, 0.0001, 0.01])
+@pytest.mark.parametrize(
+    "delta",
+    [
+        sign * magnitude
+        for sign in [-1, 1]
+        for magnitude in [0.000001, 0.0001, 0.01, 0.0501, 0.051178, 0.249, 0.25, 0.251]
+    ],
+)
 def test_k3_half_scores_promote_before_loss_math(dtype, delta):
     actor = torch.tensor([0.0], dtype=dtype, requires_grad=True)
     reference = torch.tensor([delta], dtype=dtype)
