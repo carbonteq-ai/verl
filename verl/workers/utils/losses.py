@@ -91,10 +91,17 @@ def ppo_loss(config: ActorConfig, model_output, data: TensorDict, dp_group=None)
     data = data.select(*fields).to_padded_tensor()
 
     response_mask = data["response_mask"].to(bool)
+    # Excluded tool/padding scores must be neutral before exp/ratio operations;
+    # masking only the resulting loss cannot undo NaN or overflowing backward.
+    log_prob = log_prob.masked_fill(~response_mask, 0.0)
+    if entropy is not None:
+        entropy = entropy.masked_fill(~response_mask, 0.0)
     # compute policy loss
-    old_log_prob = data["old_log_probs"]
-    advantages = data["advantages"]
+    old_log_prob = data["old_log_probs"].masked_fill(~response_mask, 0.0)
+    advantages = data["advantages"].masked_fill(~response_mask, 0.0)
     rollout_is_weights = data.get("rollout_is_weights", None)
+    if rollout_is_weights is not None:
+        rollout_is_weights = rollout_is_weights.masked_fill(~response_mask, 0.0)
 
     loss_agg_mode = config.loss_agg_mode
 
@@ -130,7 +137,7 @@ def ppo_loss(config: ActorConfig, model_output, data: TensorDict, dp_group=None)
 
     # add kl loss
     if config.use_kl_loss:
-        ref_log_prob = data["ref_log_prob"]
+        ref_log_prob = data["ref_log_prob"].masked_fill(~response_mask, 0.0)
         # compute kl loss
         kld = kl_penalty(logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=config.kl_loss_type)
         kl_loss = agg_loss(

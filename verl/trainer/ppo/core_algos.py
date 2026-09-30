@@ -1958,6 +1958,50 @@ def compute_policy_loss_gspo(
     return pg_loss, pg_metrics
 
 
+@register_policy_loss("sampo_token_credit")
+def compute_policy_loss_sampo_token_credit(
+    old_log_prob: torch.Tensor,
+    log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    response_mask: torch.Tensor,
+    loss_agg_mode: str = "seq-mean-token-mean",
+    config: Optional[ActorConfig] = None,
+    rollout_is_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Sequence clipping with local token credit and no extra log-ratio cap.
+
+    This is the GSPO-token derivative for token-aligned hierarchical credit.
+    It preserves the declared clipping objective independently of native GSPO's
+    numerical cap. Excluded scores are neutralized before ratio arithmetic.
+    """
+    assert config is not None
+    assert isinstance(config, ActorConfig)
+    low = config.clip_ratio_low if config.clip_ratio_low is not None else config.clip_ratio
+    high = config.clip_ratio_high if config.clip_ratio_high is not None else config.clip_ratio
+    active = response_mask.bool()
+    current = log_prob.float() if log_prob.dtype in (torch.float16, torch.bfloat16) else log_prob
+    old = old_log_prob.float() if old_log_prob.dtype in (torch.float16, torch.bfloat16) else old_log_prob
+    current = current.masked_fill(~active, 0.0)
+    old = old.masked_fill(~active, 0.0)
+    credit = advantages.masked_fill(~active, 0.0)
+    delta = current - old
+    length = response_mask.sum(-1).clamp(min=1)
+    sequence_delta = (delta * response_mask).sum(-1) / length
+    token_delta = current - current.detach() + sequence_delta.detach().unsqueeze(-1)
+    ratio = torch.exp(token_delta)
+    unclipped = -credit * ratio
+    clipped = -credit * ratio.clamp(1 - low, 1 + high)
+    losses = torch.maximum(unclipped, clipped)
+    if rollout_is_weights is not None:
+        losses = losses * rollout_is_weights.masked_fill(~active, 0.0)
+    loss = agg_loss(losses, response_mask, "seq-mean-token-mean", **config.global_batch_info)
+    return loss, {
+        "actor/pg_clipfrac": verl_F.masked_mean((clipped > unclipped).float(), response_mask).detach().item(),
+        "actor/ppo_kl": verl_F.masked_mean(-delta, response_mask).detach().item(),
+        "actor/pg_clipfrac_lower": 0.0,
+    }
+
+
 @register_policy_loss("sapo")
 def compute_policy_loss_sapo(
     old_log_prob: torch.Tensor,
@@ -2578,8 +2622,14 @@ def kl_penalty_forward(logprob: torch.FloatTensor, ref_logprob: torch.FloatTenso
     if kl_penalty == "k3_unclipped":
         # The k3 estimator exactly as TRL's GRPO trainer computes it: no clamp on the
         # log ratio or on the estimate, so large policy drift is penalized in full.
-        delta = ref_logprob - logprob
-        return torch.expm1(delta) - delta
+        current = logprob.float() if logprob.dtype in (torch.float16, torch.bfloat16) else logprob
+        reference = ref_logprob.float() if ref_logprob.dtype in (torch.float16, torch.bfloat16) else ref_logprob
+        delta = reference - current
+        small = delta.abs() <= 0.05
+        # Bound the unused polynomial input: where evaluates both branches.
+        x = delta.masked_fill(~small, 0.0)
+        series = x.square() * (0.5 + x * (1 / 6 + x * (1 / 24 + x * (1 / 120 + x / 720))))
+        return torch.where(small, series, torch.expm1(delta) - delta)
 
     if kl_penalty in ("low_var_kl", "k3"):
         kl = ref_logprob - logprob

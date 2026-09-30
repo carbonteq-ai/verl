@@ -2,6 +2,57 @@
 
 ## Status
 
+**Unpublished Posttrain math parity candidate.** Isolated branch
+`codex/posttrain-math-parity` starts from runtime-pinned
+`ef1c37715fa75de5973ae5b3c398383cd7e0093d`. No release version, asset,
+dependency pin or production recipe is changed by this candidate.
+
+The delta is in `verl/trainer/ppo/core_algos.py` and
+`verl/workers/utils/losses.py`, with independent regressions in
+`tests/trainer/ppo/test_posttrain_math_on_cpu.py`:
+
+- `k3_unclipped` uses a sixth-order small-delta series to preserve its value
+  and derivative near zero. Half scores are promoted before subtraction.
+  The unused polynomial branch is bounded to avoid overflowing backward.
+  The estimator, coefficient and legacy derivative convention are unchanged.
+- `ppo_loss` neutralizes excluded policy, behavior, reference, advantage,
+  correction-weight and entropy entries before nonlinear loss arithmetic.
+  This prevents invalid tool/padding scores from poisoning valid gradients.
+- Opt-in `sampo_token_credit` uses geometric sequence ratios with the
+  GSPO-token local derivative and declared asymmetric clipping, without
+  native GSPO's additional log-ratio cap. Native `gspo` remains unchanged.
+
+Upstream duplicate check found PR
+<https://github.com/verl-project/verl/pull/6349>, which masks invalid values
+at sequence aggregation. This candidate instead repairs the earlier
+ratio/exponential boundary, including its backward path. No duplicate
+upstream PR is proposed. Rebase conflicts should preserve early score masking,
+small-KL derivatives and the distinction between native GSPO and SAMPO.
+
+CPU validation uses the existing Ray/Hydra/Torch CPU parity environment with
+this checkout on `PYTHONPATH`:
+
+```bash
+python -m pytest -c /dev/null -p no:cacheprovider \
+  tests/trainer/ppo/test_posttrain_math_on_cpu.py \
+  tests/trainer/ppo/test_sampo_advantage_on_cpu.py -q
+```
+
+Result: 130 passed, including 14 Decimal KL checks, 12 BF16/FP16 small-KL
+checks, 10 independent signed-credit cases, 18 actual PPO-wrapper masking
+checks, 12 retained hierarchy tests and 63 existing core/loss regressions.
+The half-score boundary tests exposed value cancellation when half rounding
+moved delta0.01 outside the original series region; the series now covers
+absolute delta through0.05. Its omitted terms are below FP32 rounding there.
+The original wrapper, substituted with candidate kernels held fixed, fails
+14/18 mask tests; the corrected wrapper passes all18. Posttrain's48 existing
+settings/algorithm/sampling/curriculum parity tests also pass on this checkout.
+The initial KL negative control failed 12/14 near-zero cases. The new policy
+loss was absent from the baseline registry. Model/distributed BF16/FP16
+qualification, Posttrain capability/mapping adoption, publication and immutable
+runtime pins remain open. CPU wrapper tests do not qualify unavailable optional
+model engines or production training.
+
 **Release candidate `0.9.0.post8`.** Post8 is the post7 asset receipt
 (`07ecac23`) plus one fix, "Agent-loop defaults declared in the trainer
 config" under "Maintained delta": since post2 the agent-loop manager read
