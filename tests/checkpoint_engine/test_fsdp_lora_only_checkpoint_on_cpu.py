@@ -110,7 +110,7 @@ class TestFSDPCheckpointManagerLoraOnly:
         monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1)
         monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
 
-    def _make_fsdp_manager(self, checkpoint_config, model=None):
+    def _make_fsdp_manager(self, checkpoint_config, model=None, grad_scaler=None):
         from verl.utils.checkpoint.fsdp_checkpoint_manager import FSDPCheckpointManager
 
         if model is None:
@@ -118,6 +118,7 @@ class TestFSDPCheckpointManagerLoraOnly:
 
         return FSDPCheckpointManager(
             model=model,
+            grad_scaler=grad_scaler,
             optimizer=None,
             lr_scheduler=None,
             processing_class=None,
@@ -227,6 +228,68 @@ class TestFSDPCheckpointManagerLoraOnly:
         mgr2.load_checkpoint(local_path=str(save_dir))
 
         assert model_after._fsdp_wrapped_module.base_weight.item() == 42.0
+
+    def test_extra_state_restores_loss_scale_and_growth_counter(self, tmp_path):
+        import torch
+
+        scaler = torch.amp.GradScaler("cpu", init_scale=512, growth_interval=3)
+        expected = scaler.state_dict()
+        expected["_growth_tracker"] = 2
+        scaler.load_state_dict(expected)
+        manager = self._make_fsdp_manager({"save_contents": ["extra"], "load_contents": ["extra"]}, grad_scaler=scaler)
+        manager.save_checkpoint(str(tmp_path), global_step=4)
+        extra = torch.load(tmp_path / "extra_state_world_size_1_rank_0.pt", weights_only=False)
+        assert extra["grad_scaler"] == expected
+        replacement = torch.amp.GradScaler("cpu", init_scale=65536)
+        loader = self._make_fsdp_manager({"load_contents": ["extra"]}, grad_scaler=replacement)
+        loader.load_checkpoint(str(tmp_path))
+        assert replacement.state_dict() == expected
+
+    def test_fp16_missing_scaler_fails_before_model_load(self, tmp_path):
+        import torch
+
+        torch.save({"lr_scheduler": None}, tmp_path / "extra_state_world_size_1_rank_0.pt")
+        model = _FakeFSDPModel(has_lora=True)
+        model._fsdp_wrapped_module.base_weight.data.fill_(99.0)
+        loader = self._make_fsdp_manager(
+            {"load_contents": ["model", "extra"]}, model=model, grad_scaler=torch.amp.GradScaler("cpu")
+        )
+        with pytest.raises(ValueError, match="missing GradScaler state"):
+            loader.load_checkpoint(str(tmp_path))
+        assert model._fsdp_wrapped_module.base_weight.item() == 99.0
+
+    def test_bf16_extra_state_remains_compatible(self, tmp_path):
+        import torch
+
+        manager = self._make_fsdp_manager({"save_contents": ["extra"], "load_contents": ["extra"]})
+        manager.save_checkpoint(str(tmp_path))
+        extra = torch.load(tmp_path / "extra_state_world_size_1_rank_0.pt", weights_only=False)
+        assert "grad_scaler" not in extra
+        manager.load_checkpoint(str(tmp_path))
+
+    def test_disabled_scaler_accepts_legacy_extra_state(self, tmp_path):
+        import torch
+
+        saver = self._make_fsdp_manager({"save_contents": ["extra"]})
+        saver.save_checkpoint(str(tmp_path))
+        loader = self._make_fsdp_manager(
+            {"load_contents": ["extra"]}, grad_scaler=torch.amp.GradScaler("cpu", enabled=False)
+        )
+        loader.load_checkpoint(str(tmp_path))
+
+    def test_model_only_fp16_load_does_not_require_scaler_state(self, tmp_path):
+        import torch
+
+        saver = self._make_fsdp_manager({"save_contents": ["model"], "save_lora_only": True})
+        saver.save_checkpoint(str(tmp_path))
+        model = _FakeFSDPModel(has_lora=True)
+        model._fsdp_wrapped_module.lora_A_weight.data.fill_(99.0)
+        scaler = torch.amp.GradScaler("cpu", init_scale=1024)
+        expected = scaler.state_dict()
+        loader = self._make_fsdp_manager({"load_contents": ["model"]}, model=model, grad_scaler=scaler)
+        loader.load_checkpoint(str(tmp_path))
+        assert model._fsdp_wrapped_module.lora_A_weight.item() == 0.5
+        assert scaler.state_dict() == expected
 
 
 class _FakeConfig:

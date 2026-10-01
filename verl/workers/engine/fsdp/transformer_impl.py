@@ -208,6 +208,7 @@ class FSDPEngine(BaseEngine):
             processing_class=self.model_config.get_processor(),
             checkpoint_config=self.checkpoint_config,
             trust_remote_code=self.model_config.trust_remote_code,
+            grad_scaler=self.scaler,
         )
 
         self.to(

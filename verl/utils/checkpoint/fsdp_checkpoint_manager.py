@@ -82,6 +82,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         processing_class: PreTrainedTokenizer | ProcessorMixin = None,
         checkpoint_config: DictConfig = None,
         trust_remote_code: bool = False,
+        grad_scaler: Optional[torch.amp.GradScaler] = None,
         **kwargs,
     ):
         if processing_class is None and "tokenizer" in kwargs:
@@ -98,6 +99,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             checkpoint_config=checkpoint_config,
         )
         self.trust_remote_code = trust_remote_code
+        self.grad_scaler = grad_scaler
 
     def _get_lora_train_meta(self, unwrap_model):
         peft_config = getattr(unwrap_model, "peft_config", None)
@@ -197,6 +199,23 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 "optimizer must be provided when checkpoint_contents.load includes ['optimizer']"
             )
 
+        extra_state_dict = None
+        if self.should_load_extra:
+            remote_extra_state_path = os.path.join(
+                local_path, f"extra_state_world_size_{self.world_size}_rank_{self.rank}.pt"
+            )
+            local_extra_state_path = copy_to_local(remote_extra_state_path)
+            extra_state_dict = torch.load(local_extra_state_path, weights_only=False)
+            if (
+                self.grad_scaler is not None
+                and self.grad_scaler.is_enabled()
+                and not extra_state_dict.get("grad_scaler")
+            ):
+                raise ValueError(
+                    "FP16 checkpoint extra state is missing GradScaler state; exact training restore is unavailable. "
+                    "Use model-only load_contents for an explicit weights-only start."
+                )
+
         # every rank download its own checkpoint
         state_dict_cfg = (
             ShardedStateDictConfig(offload_to_cpu=True if is_cuda_available else False)
@@ -238,11 +257,6 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 log_with_rank(f"Loaded optimizer from {remote_optim_path}", rank=self.rank, logger=logger)
 
         if self.should_load_extra:
-            remote_extra_state_path = os.path.join(
-                local_path, f"extra_state_world_size_{self.world_size}_rank_{self.rank}.pt"
-            )
-            local_extra_state_path = copy_to_local(remote_extra_state_path)
-            extra_state_dict = torch.load(local_extra_state_path, weights_only=False)
             # recover random state
             if "rng" in extra_state_dict:
                 # 'rng' may not exist for backward compatibility
@@ -253,6 +267,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             if lr_scheduler_state_dict is not None and self.lr_scheduler is not None:
                 self.lr_scheduler.load_state_dict(lr_scheduler_state_dict)
                 log_with_rank(f"Loaded lr_scheduler from {remote_extra_state_path}", rank=self.rank, logger=logger)
+            if self.grad_scaler is not None and self.grad_scaler.is_enabled():
+                self.grad_scaler.load_state_dict(extra_state_dict["grad_scaler"])
 
         if self.rank == 0 and del_local_after_load:
             try:
@@ -358,6 +374,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                         "lr_scheduler": lr_scheduler_state_dict,
                         "rng": self.get_rng_state(),
                     }
+                    if self.grad_scaler is not None:
+                        extra_state_dict["grad_scaler"] = self.grad_scaler.state_dict()
                     torch.save(extra_state_dict, extra_path)
                     log_with_rank(f"Saved extra_state to {os.path.abspath(extra_path)}", rank=self.rank, logger=logger)
 

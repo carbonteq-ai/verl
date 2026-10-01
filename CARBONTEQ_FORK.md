@@ -2,6 +2,33 @@
 
 ## Status
 
+FSDP FP16 checkpoint-state candidate (2026-10-01): the engine now binds its
+optional scaler to `FSDPCheckpointManager`. Per-rank extra state persists the
+loss scale, growth/backoff configuration and growth tracker, alongside RNG
+and scheduler state. Full restore with an enabled scaler validates presence
+before model/optimizer loading; older checkpoints without scaler state fail
+clearly. Explicit model-only loading, BF16 and disabled-scaler legacy extra
+state remain compatible. Source delta: `verl/utils/checkpoint/fsdp_checkpoint_manager.py`
+and `verl/workers/engine/fsdp/transformer_impl.py`; five new regressions are
+in `tests/checkpoint_engine/test_fsdp_lora_only_checkpoint_on_cpu.py`.
+
+The native LFM1.2B FP16 FSDP2 CPU-offload probe saves LoRA-only model state
+with full optimizer/extra state at scale512 and growth tracker1. Same-process
+restore and a fresh engine in another process both reproduce the next update
+exactly: adapter parameters, optimizer moments, scaler, scheduler and RNG.
+The control omitting scaler binding restores every other field but keeps
+scale1024/tracker0 and fails. Independent loss/score and AdamW checks pass;
+peak allocated Torch memory is2.06GiB. Native distributed/full-weight,
+other architectures and production wheels/pins remain unqualified.
+Checkpoint, cleanup and scaler slices pass34 tests together:
+`PYTHONPATH=. python -m pytest -c /dev/null -p no:cacheprovider tests/checkpoint_engine/test_fsdp_lora_only_checkpoint_on_cpu.py tests/utils/ckpt/test_checkpoint_cleanup_on_cpu.py tests/utils/test_sharded_grad_scaler.py -q`.
+
+Rebase must preserve scaler binding, per-rank extra-state persistence and
+early missing-state validation. Remove this delta only when adopted upstream
+checkpoint handling provides equivalent exact-replay evidence. No released
+runtime or dependency pin is changed. The native probe uses two logical
+updates plus replay attempts, not three different updates.
+
 CPU-offload FP16 unscale candidate (2026-10-01): Torch2.13's sharded scaler
 uses nonblocking scalar replication. A CPU foreach kernel can read a
 CUDA-to-CPU inverse-scale copy before completion. A delayed scalar control
