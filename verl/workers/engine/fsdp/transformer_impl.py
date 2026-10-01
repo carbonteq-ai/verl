@@ -1407,7 +1407,7 @@ class FSDPEngineWithLMHead(FSDPEngine):
                 # With TP, logits are DTensors sharded on vocab dim; gather for log_softmax.
                 if isinstance(logits_rmpad, DTensor):
                     logits_rmpad = logits_rmpad.full_tensor()
-                logits_rmpad = logits_rmpad / temperature_rmpad.clamp(min=1e-8).unsqueeze(-1).to(logits_rmpad.dtype)
+                logits_rmpad = verl_F.scale_logits_by_temperature(logits_rmpad, temperature_rmpad.unsqueeze(-1))
 
                 log_probs = None
 
@@ -1500,7 +1500,7 @@ class FSDPEngineWithLMHead(FSDPEngine):
                 # With TP, logits are DTensors sharded on vocab dim; gather for log_softmax.
                 if isinstance(logits, DTensor):
                     logits = logits.full_tensor()
-                logits = logits / temperature.clamp(min=1e-8).to(logits.dtype)
+                logits = verl_F.scale_logits_by_temperature(logits, temperature)
 
                 if calculate_entropy:
                     if not self.engine_config.entropy_checkpointing:

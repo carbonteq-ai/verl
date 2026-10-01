@@ -70,6 +70,18 @@ def gather_from_labels(data: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
     return output
 
 
+def scale_logits_by_temperature(logits: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
+    """Scale represented logits without rounding the division in half precision.
+
+    Temperature must already broadcast to the logit shape. Preserve float32 and
+    float64 arithmetic; half model logits use float32 probability arithmetic.
+    Promotion precedes division, so normalization cannot inherit rounded logits.
+    """
+    if logits.dtype in (torch.float16, torch.bfloat16):
+        logits = logits.float()
+    return logits / temperature.to(device=logits.device, dtype=logits.dtype).clamp(min=1e-8)
+
+
 def logprobs_from_logits(logits, labels, inplace_backward=True):
     """
     Compute per-token log-probabilities for the given labels.

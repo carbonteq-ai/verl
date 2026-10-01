@@ -2,6 +2,49 @@
 
 ## Status
 
+Temperature-scaling source candidate (2026-10-01): promote represented
+BF16/FP16 logits before temperature division in both non-fused FSDP
+prepare_model_outputs routes. Helper ownership is
+verl/utils/torch_functional.py:scale_logits_by_temperature; integration is
+verl/workers/engine/fsdp/transformer_impl.py. Preserve FP32/FP64 arithmetic,
+model/head computation and the existing temperature floor. Half-input gradients
+retain their input dtype. This changes policy/reference scores intentionally;
+old/current scores must both be recomputed consistently on a resumed population.
+It adds FP32 logit buffers and needs a memory gate at intended batch/context sizes.
+
+Regression ownership: tests/utils/test_temperature_precision_on_cpu.py.
+Packed/unpacked integration ownership:
+tests/workers/test_temperature_scoring_routes_on_cpu.py; execute actual
+prepare_model_outputs with the real CPU fallback normalizer and independent
+scalar scores/derivatives. Four route cases plus six existing top-K distillation
+compatibility cases pass. The initial CPU normalizer adapter omitted the packed
+route's inplace_backward argument; that harness failure is retained externally.
+Combined utility regressions pass62 CPU cases(10 CUDA/distributed deselected).
+The original scaling body fails8/15 scalar score/derivative/overflow/floor cases;
+the candidate passes15/15. Real Qwen/LFM BF16/FP16 logits reproduce pre-candidate
+native scores exactly and show sampled-score differences up to0.080662/0.011010
+and0.153319/0.021459 respectively when promoting before division. CUDA autocast
+already returns FP32 fallback scores; it cannot undo prior half-division rounding.
+Native LFM GRPO/GSPO/DAPO BF16/FP16 model/optimizer/private-queue replay applies
+18/18 updates, passes36 independent losses/score gradients,432 matrix checks
+and1,728 scalar dots. Max loss error4.59e-8, derivative7.42e-11, worker aggregate
+5.08e-8 and independent Adam2.14e-9; peak3.714GB. Focused CPU/CUDA temperature
+regressions pass17/17. First-gradient changes are3.07–3.13% BF16 and0.397–0.402%
+FP16; later GRPO/DAPO clipping counts shift modestly while GSPO counts stay
+unchanged. First-update ratios remain1. Source qualification does not establish
+task-quality improvement, complete controller admission/refill, a runtime asset
+release or production adoption. No production dependency pin selects it yet.
+Fused scoring and other engine types
+are outside this candidate. Rebase must preserve promotion before division in
+both packed and unpacked routes and independent probability/derivative checks.
+
+Duplicate-work check: upstream open PR8004 adds opt-in FP32 lm_head projection,
+preserves default behavior and excludes LoRA. This candidate scales existing
+represented logits without changing the head. No upstream PR is proposed.
+Focused command: PYTHONPATH=. python -m pytest -c /dev/null -p no:cacheprovider
+tests/utils/test_temperature_precision_on_cpu.py -q. Run in the compatible native
+runtime with auxiliary dependency paths appended after its Torch/Transformers.
+
 Entropy precision repair (2026-10-01): `verl/utils/torch_functional.py`
 computes entropy from normalized log probabilities instead of subtracting
 two common-offset-sized values. Half inputs use float32 arithmetic; float32
