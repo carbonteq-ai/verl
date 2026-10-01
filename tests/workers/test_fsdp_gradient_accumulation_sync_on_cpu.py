@@ -51,6 +51,7 @@ class _FSDP2Module:
 def _make_engine(module):
     engine = object.__new__(FSDPEngine)
     engine.module = module
+    engine.get_data_parallel_size = lambda: 2
     return engine
 
 
@@ -88,6 +89,61 @@ def test_gradient_sync_context_keeps_sync_for_final_micro_batch(monkeypatch):
         module.events.append("backward")
 
     assert module.events == ["backward"]
+
+
+@pytest.mark.parametrize("version,module_cls", [(1, _FSDP1Module), (2, _FSDP2Module)])
+def test_single_rank_accumulation_does_not_defer_sync(monkeypatch, version, module_cls):
+    module = module_cls()
+    engine = _make_engine(module)
+    engine.get_data_parallel_size = lambda: 1
+    monkeypatch.setattr(transformer_impl, "fsdp_version", lambda _: version)
+    with engine._gradient_sync_context(is_last_micro_batch=False):
+        module.events.append("backward")
+    assert module.events == ["backward"]
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA FSDP2")
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("offload", [False, True])
+def test_single_rank_unused_branch_accumulated_gradient(tmp_path, dtype, offload):
+    from torch.distributed.fsdp import CPUOffloadPolicy, MixedPrecisionPolicy
+
+    class Branches(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.active = torch.nn.Linear(8, 8)
+            self.unused = torch.nn.Linear(8, 8)
+            for parameter in self.unused.parameters():
+                parameter.requires_grad_(False)
+            with torch.no_grad():
+                self.active.weight.fill_(0.25)
+                self.active.bias.zero_()
+
+        def forward(self, inputs):
+            return self.active(inputs)
+
+    dist.init_process_group("nccl", init_method=f"file://{tmp_path}/init", rank=0, world_size=1)
+    try:
+        model = Branches().cuda()
+        options = {"mp_policy": MixedPrecisionPolicy(param_dtype=dtype, reduce_dtype=torch.float32)}
+        if offload:
+            options["offload_policy"] = CPUOffloadPolicy(pin_memory=True)
+        for module in (model.active, model.unused, model):
+            fully_shard(module, **options)
+        engine = _make_engine(model)
+        engine.get_data_parallel_size = lambda: 1
+        for last in (False, True):
+            with engine._gradient_sync_context(is_last_micro_batch=last):
+                output = model(torch.ones(2, 8, device="cuda", dtype=dtype))
+                (output.float().square().mean() / 2).backward()
+        # Each output is2; two mean-square micro-losses divided by2 give
+        # weight/bias derivative0.5 at every active coordinate.
+        for parameter in model.active.parameters():
+            assert parameter.grad is not None
+            torch.testing.assert_close(parameter.grad.to_local(), torch.full_like(parameter.grad.to_local(), 0.5))
+        assert all(parameter.grad is None for parameter in model.unused.parameters())
+    finally:
+        dist.destroy_process_group()
 
 
 def test_forward_backward_batch_syncs_only_final_micro_batch(monkeypatch):

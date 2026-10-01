@@ -2,6 +2,40 @@
 
 ## Status
 
+Single-rank FSDP accumulation repair (2026-10-01): keep gradient synchronization
+enabled when the data-parallel group has one rank. There is no cross-rank
+communication to defer. Torch2.13 FSDP2's deferred-sync post-backward path can
+access an uninitialized `_unsharded_param` in an independently sharded branch
+that never ran, including unused vision modules in text-only Qwen training.
+Native minimal frozen/trainable and CPU-offload/device controls all fail with
+deferred sync and all pass with ordinary sync. This is a runtime callback
+failure, not a SAMPO formula error. Multi-rank deferral remains unchanged;
+multi-rank conditional-unused-branch behavior is not qualified by this repair.
+
+Source: `verl/workers/engine/fsdp/transformer_impl.py`. Six new regressions in
+`tests/workers/test_fsdp_gradient_accumulation_sync_on_cpu.py` fail before the
+repair and pass afterward. The complete12-test suite passes, including four
+actual CUDA BF16/FP16 offload/device accumulation cases with an independent
+closed-form gradient and the existing two-rank Gloo FSDP1/FSDP2 equivalence test:
+`PYTHONPATH=. python -m pytest -c /dev/null -p no:cacheprovider tests/workers/test_fsdp_gradient_accumulation_sync_on_cpu.py -q`.
+
+A complete collected Qwen3.5-0.8B task population now executes through FSDP2
+CPU offload:1,119 prompt tokens,289/420 response tokens,133/165 sampled actions,
+rank4/alpha8 q/v LoRA, two accumulated microbatches, scale1024 and two applied
+FP16 SAMPO updates. Independent loss/score/mask and Adam checks pass. Rewards
+are both1; the direct probe deliberately bypasses production reward-constant
+admission. This does not qualify fresh learning, runtime pins or distributed
+conditional-branch execution. Retire the single-rank guard only after equivalent
+unused-branch and accumulation regressions pass under adopted upstream behavior.
+
+The matching Qwen BF16 and FP16 FP32-delta-region diagnostic arms also apply
+two updates each; all12 Qwen loss/score/mask checks pass, with maximum Adam
+error2.24e-9 and3.67GiB peak Torch allocation. A native LFM1.2B FP16 SAMPO
+regression applies two updates with48 aggregated LoRA matrix-gradient checks
+and192 independent scalar dots; all manual native gradients match exactly,
+Adam error is at most2.14e-9 and peak allocation2.06GiB. These remain bounded
+correctness probes, not convergence evidence or production runtime adoption.
+
 FSDP FP16 checkpoint-state candidate (2026-10-01): the engine now binds its
 optional scaler to `FSDPCheckpointManager`. Per-rank extra state persists the
 loss scale, growth/backoff configuration and growth tracker, alongside RNG

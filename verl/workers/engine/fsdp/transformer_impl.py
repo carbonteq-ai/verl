@@ -727,7 +727,12 @@ class FSDPEngine(BaseEngine):
         micro-batch to a single round, at the cost of temporarily retaining
         unsharded gradients until the final backward.
         """
-        if is_last_micro_batch:
+        # A singleton DP group has no gradient communication to defer. Keep
+        # normal accumulation hooks: FSDP2's no-sync callback can access an
+        # uninitialized parameter on a branch that never ran (e.g. text-only
+        # training of a multimodal model). This also avoids retaining needless
+        # unsharded gradients for single-rank CPU-offloaded training.
+        if is_last_micro_batch or self.get_data_parallel_size() == 1:
             yield
             return
 
