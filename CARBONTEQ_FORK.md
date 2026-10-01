@@ -45,6 +45,11 @@ Focused command: PYTHONPATH=. python -m pytest -c /dev/null -p no:cacheprovider
 tests/utils/test_temperature_precision_on_cpu.py -q. Run in the compatible native
 runtime with auxiliary dependency paths appended after its Torch/Transformers.
 
+Published temperature-scaling source commit:
+f5333c4f647494e497896eaed14160e2cd7186c4 on origin/codex/posttrain-math-parity.
+This identifies the tested correction and regressions; runtime assets/pins
+and the remaining controller/fused/quality gates are separate.
+
 Entropy precision repair (2026-10-01): `verl/utils/torch_functional.py`
 computes entropy from normalized log probabilities instead of subtracting
 two common-offset-sized values. Half inputs use float32 arithmetic; float32
