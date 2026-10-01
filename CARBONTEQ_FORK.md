@@ -29,6 +29,15 @@ Rebase must preserve host readiness before CPU kernels. Retire this wrapper
 only after an adopted Torch scaler provides equivalent ordering and the
 delayed-copy regressions pass. No runtime wheel or Posttrain pin is changed.
 
+Additional lifecycle qualification (2026-10-01): the scaler regression file
+now has eight passing tests. A finite/overflow/finite/finite sequence verifies
+that restoring parameter, AdamW moments and scaler state after the skipped
+step matches uninterrupted execution exactly, on CPU scaling/Gloo and CUDA
+scaling/NCCL with CPU gradients. CUDA uses the delayed-copy control. A separate
+two-rank Gloo test injects overflow on rank0 only; both ranks skip, back off
+to scale512 and apply the next finite update. These are tensor/scaler tests,
+not a native-model checkpoint round trip or multi-GPU engine qualification.
+
 Native padded-engine repair candidate (2026-10-01): eager/SDPA execution
 must not require the optional FlashAttention package just for indexing.
 When that package is absent, attention_utils reuses the existing Torch
