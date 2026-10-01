@@ -34,6 +34,10 @@ tests/utils/test_temperature_precision_on_cpu.py plus the existing route tests.
 Rebase must preserve promotion before division and first-order derivatives
 without restoring the full FP32 gradient allocation in score-only half paths.
 
+Published row-wise source commit: 7cf23e101ba70813a0b23392465b4a6eaf073731
+on origin/codex/posttrain-math-parity. Runtime assets and production pin
+adoption remain separate from the completed source/memory qualification.
+
 Temperature-scaling source candidate (2026-10-01): promote represented
 BF16/FP16 logits before temperature division in both non-fused FSDP
 prepare_model_outputs routes. Helper ownership is
