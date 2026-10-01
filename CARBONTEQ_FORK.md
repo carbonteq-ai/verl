@@ -2,6 +2,22 @@
 
 ## Status
 
+Selected-logprob cancellation source candidate (2026-10-01): normalize with
+batch-row log_softmax before gathering in logprobs_from_logits_v2 for every
+dtype. Absolute selected-logit minus logsumexp corrupts values and derivatives
+at large common offsets even in FP32/FP64. Equal FP32 logits1e8 returned0 and
+gradient[0,-1] rather than-log2 and[.5,-.5]. Preserve shape/dtype/half behavior.
+Ownership: verl/utils/torch_functional.py and
+tests/utils/test_selected_logprob_precision_on_cpu.py. Five CPU cases fail
+before repair; after repair, selected-score/temperature/actual FSDP route
+tests pass68 cases, with two intentional nonfinite-FP16-offset skips.
+Ruff/diff checks pass. Rebase must retain stable normalization and scalar
+derivative regressions. Normalized FP32/FP64 vocabulary buffers add a memory
+gate for larger contexts; half score-only routes already use the independently
+qualified token-row helper. Native optimizer/full-controller qualification,
+throughput, assets and production adoption remain separate. Extreme offsets
+are demonstrated corner cases, not measured causes of current poor task quality.
+
 Row-wise temperature-scoring source candidate (2026-10-01): the published
 full-FP32 division fixes score rounding but Qwen's8GB SAMPO backward gate fails
 with it, including expandable allocator and saved-score offload controls. Native

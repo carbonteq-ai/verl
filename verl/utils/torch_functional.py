@@ -207,10 +207,9 @@ def logprobs_from_logits_v2(logits: torch.FloatTensor, labels: torch.Tensor) -> 
     """Memory-efficient log-probability computation using row-wise processing.
 
     Computes log-probabilities by processing one row at a time to reduce peak
-    memory consumption. Uses logsumexp for float32/float64, falls back to
-    log_softmax for bfloat16 due to numerical stability concerns.
-
-    The mathematical identity used is: log_softmax(x_i) = x_i - logsumexp(x)
+    memory consumption. Uses stable log_softmax before gathering in every
+    dtype: subtracting an absolute logsumexp can lose the normalizer correction
+    at large common offsets even in float32/float64 and corrupt its derivative.
 
     Args:
         logits: Model output logits of shape (batch_size, seq_len, vocab_size)
@@ -224,19 +223,12 @@ def logprobs_from_logits_v2(logits: torch.FloatTensor, labels: torch.Tensor) -> 
         This implementation trades compute for memory by iterating over batch
         dimension, making it suitable for large vocabulary sizes.
     """
-    if logits.dtype in [torch.float32, torch.float64]:
-        logits_labels = torch.gather(logits, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-        # loop to reduce peak mem consumption
-        logsumexp_values = torch.stack([torch.logsumexp(logit, dim=-1) for logit in logits])
-        logprobs_labels = logits_labels - logsumexp_values  # log_softmax(x_i) = x_i - logsumexp(x)
-    else:
-        # logsumexp approach is unstable with bfloat16, fall back to slightly less efficent approach
-        logprobs_labels = []
-        for row_logits, row_labels in zip(logits, labels, strict=True):  # loop to reduce peak mem consumption
-            row_logprobs = F.log_softmax(row_logits, dim=-1)
-            row_logprobs_labels = row_logprobs.gather(dim=-1, index=row_labels.unsqueeze(-1)).squeeze(-1)
-            logprobs_labels.append(row_logprobs_labels)
-        logprobs_labels = torch.stack(logprobs_labels)
+    logprobs_labels = []
+    for row_logits, row_labels in zip(logits, labels, strict=True):  # loop to reduce peak mem consumption
+        row_logprobs = F.log_softmax(row_logits, dim=-1)
+        row_logprobs_labels = row_logprobs.gather(dim=-1, index=row_labels.unsqueeze(-1)).squeeze(-1)
+        logprobs_labels.append(row_logprobs_labels)
+    logprobs_labels = torch.stack(logprobs_labels)
     return logprobs_labels
 
 
