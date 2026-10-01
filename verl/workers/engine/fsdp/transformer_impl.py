@@ -423,9 +423,9 @@ class FSDPEngine(BaseEngine):
         # fp16 training requires loss scaling to avoid gradient underflow. Mirror the pattern
         # landed in #4036 for the legacy dp_actor path. bf16 / fp32 do not need a scaler.
         if param_dtype == torch.float16:
-            from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
+            from verl.utils.sharded_grad_scaler import CPUOffloadShardedGradScaler
 
-            self.scaler = ShardedGradScaler(growth_interval=400)
+            self.scaler = CPUOffloadShardedGradScaler(growth_interval=400)
         else:
             self.scaler = None
 

@@ -2,6 +2,33 @@
 
 ## Status
 
+CPU-offload FP16 unscale candidate (2026-10-01): Torch2.13's sharded scaler
+uses nonblocking scalar replication. A CPU foreach kernel can read a
+CUDA-to-CPU inverse-scale copy before completion. A delayed scalar control
+on ordinary CPU gradients fails three of four iterations at scale1024;
+affected gradients are multiplied by1024 rather than divided by1024.
+Synchronous scalar reads hide the failure. This is not DTensor-specific.
+
+`verl/utils/sharded_grad_scaler.py` adds `CPUOffloadShardedGradScaler`;
+the FSDP engine in `verl/workers/engine/fsdp/transformer_impl.py` selects it.
+Only gradients with CPU storage trigger synchronous host staging of inverse
+scale and overflow scalars. Device-only scaling and the parent's distributed
+overflow reduction remain native. `tests/utils/test_sharded_grad_scaler.py`
+checks finite/overflow CPU gradients, deliberately delayed CUDA-to-CPU copies
+and the unchanged CUDA-only path: five tests pass on the local CUDA runtime.
+Native LFM1.2B BF16/FP16 offload runs each apply two updates, with all48
+linear parameter gradients matching an independent `D.T @ X` construction
+exactly and192 selected scalar dot-product checks per arm. These checks do
+not independently differentiate nonlinear model blocks or qualify multi-rank
+overflow/recovery. Source and release adoption remain separate gates.
+
+Base for this delta:8778c5d6e2ddd847d5098a24f4dc882f11ac57b4. Focused command:
+`PYTHONPATH=. python -m pytest -c /dev/null -p no:cacheprovider tests/utils/test_sharded_grad_scaler.py -q`.
+Run with CUDA before release; CPU-only execution skips the three CUDA cases.
+Rebase must preserve host readiness before CPU kernels. Retire this wrapper
+only after an adopted Torch scaler provides equivalent ordering and the
+delayed-copy regressions pass. No runtime wheel or Posttrain pin is changed.
+
 Native padded-engine repair candidate (2026-10-01): eager/SDPA execution
 must not require the optional FlashAttention package just for indexing.
 When that package is absent, attention_utils reuses the existing Torch
