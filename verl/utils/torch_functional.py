@@ -82,6 +82,27 @@ def scale_logits_by_temperature(logits: torch.Tensor, temperature: torch.Tensor)
     return logits / temperature.to(device=logits.device, dtype=logits.dtype).clamp(min=1e-8)
 
 
+def temperature_scaled_logprobs(logits: torch.Tensor, labels: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
+    """Normalize represented logits in float32 one token row at a time.
+
+    Unbind before promotion so autograd returns half row gradients directly to
+    the half model tensor, avoiding a full float32 logit-gradient allocation.
+    Float32/float64 inputs keep their arithmetic dtype. Temperature must broadcast
+    to logits with a singleton vocabulary dimension. No model logits are changed.
+    """
+    rows = logits.reshape(-1, logits.shape[-1]).unbind()
+    targets = labels.reshape(-1).unbind()
+    temperatures = torch.broadcast_to(temperature, logits.shape[:-1] + (1,)).reshape(-1).unbind()
+    if not rows:
+        dtype = torch.float32 if logits.dtype in (torch.float16, torch.bfloat16) else logits.dtype
+        return logits.sum(dim=-1).to(dtype)
+    scores = []
+    for row, target, row_temperature in zip(rows, targets, temperatures, strict=True):
+        scaled = scale_logits_by_temperature(row, row_temperature)
+        scores.append(F.log_softmax(scaled, dim=-1)[target])
+    return torch.stack(scores).reshape(labels.shape)
+
+
 def logprobs_from_logits(logits, labels, inplace_backward=True):
     """
     Compute per-token log-probabilities for the given labels.

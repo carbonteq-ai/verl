@@ -1407,7 +1407,11 @@ class FSDPEngineWithLMHead(FSDPEngine):
                 # With TP, logits are DTensors sharded on vocab dim; gather for log_softmax.
                 if isinstance(logits_rmpad, DTensor):
                     logits_rmpad = logits_rmpad.full_tensor()
-                logits_rmpad = verl_F.scale_logits_by_temperature(logits_rmpad, temperature_rmpad.unsqueeze(-1))
+                rowwise_scores = logits_rmpad.dtype in (torch.float16, torch.bfloat16) and not (
+                    calculate_entropy or calculate_sum_pi_squared or distillation_use_topk or distillation_only
+                )
+                if not rowwise_scores:
+                    logits_rmpad = verl_F.scale_logits_by_temperature(logits_rmpad, temperature_rmpad.unsqueeze(-1))
 
                 log_probs = None
 
@@ -1445,11 +1449,16 @@ class FSDPEngineWithLMHead(FSDPEngine):
                     inplace_backward = True
                     if calculate_entropy:
                         inplace_backward = False
-                    log_probs = logprobs_from_logits(
-                        logits=logits_rmpad,
-                        labels=input_ids_rmpad_rolled,
-                        inplace_backward=inplace_backward,
-                    )
+                    if rowwise_scores:
+                        log_probs = verl_F.temperature_scaled_logprobs(
+                            logits_rmpad, input_ids_rmpad_rolled, temperature_rmpad.unsqueeze(-1)
+                        )
+                    else:
+                        log_probs = logprobs_from_logits(
+                            logits=logits_rmpad,
+                            labels=input_ids_rmpad_rolled,
+                            inplace_backward=inplace_backward,
+                        )
 
             # gather across the ulysses sp group and drop the packed-sequence padding
             pad_size = output_args["pad_size"]
@@ -1500,7 +1509,11 @@ class FSDPEngineWithLMHead(FSDPEngine):
                 # With TP, logits are DTensors sharded on vocab dim; gather for log_softmax.
                 if isinstance(logits, DTensor):
                     logits = logits.full_tensor()
-                logits = verl_F.scale_logits_by_temperature(logits, temperature)
+                rowwise_scores = logits.dtype in (torch.float16, torch.bfloat16) and not (
+                    calculate_entropy or calculate_sum_pi_squared or distillation_use_topk or distillation_only
+                )
+                if not rowwise_scores:
+                    logits = verl_F.scale_logits_by_temperature(logits, temperature)
 
                 if calculate_entropy:
                     if not self.engine_config.entropy_checkpointing:
@@ -1541,7 +1554,13 @@ class FSDPEngineWithLMHead(FSDPEngine):
 
                     log_probs = None
                     if not distillation_only:
-                        log_probs = logprobs_from_logits(logits=logits_rmpad, labels=input_ids_rmpad_rolled)
+                        if rowwise_scores:
+                            temperatures_rmpad = output_args["temperature"].repeat_interleave(seq_lengths).unsqueeze(-1)
+                            log_probs = verl_F.temperature_scaled_logprobs(
+                                logits_rmpad, input_ids_rmpad_rolled, temperatures_rmpad
+                            )
+                        else:
+                            log_probs = logprobs_from_logits(logits=logits_rmpad, labels=input_ids_rmpad_rolled)
 
                     # (bsz, j1), for each sample, length of each sample: [real_prompt_length + real_response_length]
                     if not distillation_only:

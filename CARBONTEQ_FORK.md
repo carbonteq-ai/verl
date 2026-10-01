@@ -2,6 +2,38 @@
 
 ## Status
 
+Row-wise temperature-scoring source candidate (2026-10-01): the published
+full-FP32 division fixes score rounding but Qwen's8GB SAMPO backward gate fails
+with it, including expandable allocator and saved-score offload controls. Native
+activation offload also raises a tuple-restoration assertion after an allocation
+warning; its independence from memory exhaustion is unproven.
+
+Candidate temperature_scaled_logprobs unbinds half model logits into token rows
+before FP32 scaling/log_softmax. Autograd returns half row gradients without a
+full FP32 logit-gradient buffer. Both non-fused FSDP routes select this path for
+half score-only requests. Entropy, sum-pi-squared and distillation retain the
+published full-FP32 path and its separate memory gate. Model/head arithmetic,
+temperature floor and policy/KL definitions remain unchanged. This bypasses
+optional flash CE for these requests; throughput and fused-kernel integration
+are adoption gates, alongside larger/distributed workloads.
+
+Forty-two focused CPU/CUDA scalar/empty-gradient/route/distillation cases pass.
+The combined utilities and route/distillation suite passes95 tests, with four
+distributed cases deliberately deselected; Ruff and diff checks pass.
+All four Qwen/LFM BF16/FP16 arms apply12/12 SAMPO updates with ordinary allocator
+and no extra offload. Twenty-four independent losses/score derivatives,288 matrix
+checks and1,152 scalar dots pass: max loss5.39e-8, derivative9.96e-11, worker
+aggregate4.62e-8 and Adam4.12e-9. Thirty-two independent full-vocabulary scalar
+checks agree within1.54e-7. Peak tensor allocations3.218GB Qwen and2.014GB LFM.
+Initial weights match exactly; Qwen BF16 scores match the full-FP32 reference
+within2.27e-6. BF16 later clipping changes substantially, FP16 counts stay equal;
+first-update ratios remain1. This qualifies a source candidate, not task quality,
+full controller admission/refill, runtime assets or production adoption.
+Ownership: verl/utils/torch_functional.py, the two FSDP output routes, and
+tests/utils/test_temperature_precision_on_cpu.py plus the existing route tests.
+Rebase must preserve promotion before division and first-order derivatives
+without restoring the full FP32 gradient allocation in score-only half paths.
+
 Temperature-scaling source candidate (2026-10-01): promote represented
 BF16/FP16 logits before temperature division in both non-fused FSDP
 prepare_model_outputs routes. Helper ownership is

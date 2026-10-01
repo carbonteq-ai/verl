@@ -3,17 +3,21 @@ import math
 import pytest
 import torch
 
-from verl.utils.torch_functional import scale_logits_by_temperature
+from verl.utils.torch_functional import scale_logits_by_temperature, temperature_scaled_logprobs
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32, torch.float64])
 @pytest.mark.parametrize("temperature", [0.8, 1.0, 0.1])
-def test_temperature_score_and_derivative_against_scalar_reference(dtype, temperature):
+@pytest.mark.parametrize("rowwise", [False, True])
+def test_temperature_score_and_derivative_against_scalar_reference(dtype, temperature, rowwise):
     logits = torch.tensor([[-12.0, -4.0, 0.0, 2.0], [10.0, 11.0, 11.0, 10.0]], dtype=dtype, requires_grad=True)
     before = logits.detach().clone()
     temperatures = torch.full((2, 1), temperature, dtype=torch.float64)
     scaled = scale_logits_by_temperature(logits, temperatures)
-    scores = scaled.log_softmax(-1)[:, 0]
+    scores = (
+        temperature_scaled_logprobs(logits, torch.zeros(2, dtype=torch.long), temperatures)
+        if rowwise else scaled.log_softmax(-1)[:, 0]
+    )
     gradient = torch.autograd.grad(scores.sum(), logits)[0]
     expected_scores = []
     expected_gradients = []
@@ -49,14 +53,25 @@ def test_temperature_floor_does_not_underflow_in_fp16():
     assert torch.equal(scaled, torch.zeros_like(scaled))
 
 
+def test_rowwise_empty_scores_retain_zero_gradient_path():
+    logits = torch.empty((0, 4), dtype=torch.bfloat16, requires_grad=True)
+    scores = temperature_scaled_logprobs(logits, torch.empty(0, dtype=torch.long), torch.tensor(0.8))
+    assert scores.shape == (0,) and scores.dtype == torch.float32
+    assert torch.autograd.grad(scores.sum(), logits)[0].shape == logits.shape
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA temperature precision qualification")
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
-def test_cuda_autocast_temperature_score_and_derivative(dtype):
+@pytest.mark.parametrize("rowwise", [False, True])
+def test_cuda_autocast_temperature_score_and_derivative(dtype, rowwise):
     logits = torch.tensor([[-12.0, -4.0, 0.0, 2.0], [60000.0] * 4], device="cuda",
                           dtype=dtype, requires_grad=True)
     temperatures = torch.tensor([[0.8], [0.1]], device="cuda")
     with torch.autocast("cuda", dtype=dtype):
-        scores = scale_logits_by_temperature(logits, temperatures).log_softmax(-1)[:, 0]
+        scores = (
+            temperature_scaled_logprobs(logits, torch.zeros(2, device="cuda", dtype=torch.long), temperatures)
+            if rowwise else scale_logits_by_temperature(logits, temperatures).log_softmax(-1)[:, 0]
+        )
     gradient = torch.autograd.grad(scores.sum(), logits)[0]
     expected_scores = []
     expected_gradients = []
