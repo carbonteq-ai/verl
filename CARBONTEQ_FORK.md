@@ -25,6 +25,21 @@ Rebase/retirement requires equivalent stable values, derivatives, half-input
 promotion and zero-probability behavior. Full-model/runtime assets and distributed
 entropy execution remain qualification gates; this is a source candidate.
 
+Published entropy source commit: `c1e477d7d83badb4be6742c9efde483956698f01`.
+Actual Qwen BF16 native controller old/reference method bodies, private real
+TransferQueue and GPU worker pass with64-token entropy chunks and Posttrain's
+seq-mean-token-mean aggregation. Independent causal score slices and masks
+are exact; reference/base identity and actor restoration pass. After three
+updates the actor differs from the base by1.03025 at the largest response-score
+coordinate, so the reference check is nontrivial. Entropy aggregation agrees
+with scalar row means within5.41e-9. Parameters/scores at steps0–3 and all three
+preclip gradients remain bitwise identical to the pre-repair control. The
+actual entropy metric changes only1.19e-7 on this trace; no task-quality or
+production-cause conclusion follows. Unchunked controller entropy exceeded
+the8GB memory budget before repair; chunking remains an explicit probe setting.
+Full controller construction, Ray GPU dispatch/admission/refill and other
+families/precisions remain separate integration gates.
+
 Single-rank FSDP accumulation repair (2026-10-01): keep gradient synchronization
 enabled when the data-parallel group has one rank. There is no cross-rank
 communication to defer. Torch2.13 FSDP2's deferred-sync post-backward path can
