@@ -2,6 +2,29 @@
 
 ## Status
 
+Entropy precision repair (2026-10-01): `verl/utils/torch_functional.py`
+computes entropy from normalized log probabilities instead of subtracting
+two common-offset-sized values. Half inputs use float32 arithmetic; float32
+and float64 retain their arithmetic dtype. Zero-probability terms have finite
+value and gradient even when finite extreme logit differences overflow.
+Chunked entropy delegates to the same arithmetic. This intentionally changes
+unchunked half entropy outputs to float32; inputs retain their gradient dtype.
+It does not change policy/KL formulas or enable chunking by default.
+
+Independent represented-logit controls reproduce BF16[10,11] entropy0.5625
+versus0.582203, and uniform high-offset cancellation to0, including chunked
+float32 at1e8. Before repair,24 of36 new CPU regressions fail; after repair,
+all36 pass. Six CUDA BF16/FP16/FP32 value/gradient controls also pass.
+The related non-distributed utility slice passes53 tests (four distributed
+cases deliberately deselected): `PYTHONPATH=. python -m pytest -c /dev/null
+-p no:cacheprovider tests/utils/test_entropy_precision_on_cpu.py
+tests/utils/test_torch_functional.py -k 'not distributed' -q`.
+The17-case external scalar probe's maximum repaired value error is1.87e-8.
+Regression ownership: `tests/utils/test_entropy_precision_on_cpu.py`.
+Rebase/retirement requires equivalent stable values, derivatives, half-input
+promotion and zero-probability behavior. Full-model/runtime assets and distributed
+entropy execution remain qualification gates; this is a source candidate.
+
 Single-rank FSDP accumulation repair (2026-10-01): keep gradient synchronization
 enabled when the data-parallel group has one rank. There is no cross-rank
 communication to defer. Torch2.13 FSDP2's deferred-sync post-backward path can

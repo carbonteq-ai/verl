@@ -231,8 +231,9 @@ def clip_by_value(x: torch.Tensor, tensor_min: torch.Tensor, tensor_max: torch.T
 def entropy_from_logits(logits: torch.Tensor) -> torch.Tensor:
     """Calculate Shannon entropy from unnormalized logits.
 
-    Computes H(p) = -sum(p * log(p)) using the numerically stable formula:
-    entropy = logsumexp(logits) - sum(softmax(logits) * logits)
+    Computes H(p) = -sum(p * log(p)) from normalized log probabilities.
+    Half inputs use float32 arithmetic. Keeping the common logit offset out
+    of the final subtraction avoids cancellation, including for float32.
 
     Args:
         logits: Unnormalized log-probabilities of shape (..., vocab_size).
@@ -240,8 +241,14 @@ def entropy_from_logits(logits: torch.Tensor) -> torch.Tensor:
     Returns:
         torch.Tensor: Entropy values with shape (...,), one per distribution.
     """
-    pd = torch.nn.functional.softmax(logits, dim=-1)
-    entropy = torch.logsumexp(logits, dim=-1) - torch.sum(pd * logits, dim=-1)
+    compute_logits = logits.float() if logits.dtype in (torch.float16, torch.bfloat16) else logits
+    log_prob = torch.nn.functional.log_softmax(compute_logits, dim=-1)
+    pd = log_prob.exp()
+    # Finite extreme logits can produce -inf normalized scores when their
+    # difference overflows. Such zero-probability terms contribute zero;
+    # avoid 0 * -inf in both the value and its autograd path.
+    finite_log_prob = torch.where(pd > 0, log_prob, torch.zeros_like(log_prob))
+    entropy = -torch.sum(pd * finite_log_prob, dim=-1)
     return entropy
 
 
@@ -259,14 +266,12 @@ def entropy_from_logits_with_chunking(logits: torch.Tensor, chunk_size: int = 20
         torch.Tensor: Entropy values with shape (batch_size,).
 
     Note:
-        Converts chunks to float32 for numerical stability during computation.
+        Half inputs use float32; float32/float64 retain their arithmetic dtype.
     """
-    entropy = torch.zeros(logits.shape[0], device=logits.device)
+    dtype = torch.float32 if logits.dtype in (torch.float16, torch.bfloat16) else logits.dtype
+    entropy = torch.zeros(logits.shape[0], device=logits.device, dtype=dtype)
     for i in range(0, logits.shape[0], chunk_size):
-        logits_chunk = logits[i : i + chunk_size].float()
-        pd_chunk = torch.nn.functional.softmax(logits_chunk, dim=-1)
-        entropy_chunk = torch.logsumexp(logits_chunk, dim=-1) - torch.sum(pd_chunk * logits_chunk, dim=-1)
-        entropy[i : i + chunk_size] = entropy_chunk
+        entropy[i : i + chunk_size] = entropy_from_logits(logits[i : i + chunk_size])
     return entropy
 
 
