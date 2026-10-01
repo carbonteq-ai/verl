@@ -17,6 +17,11 @@ gate for larger contexts; half score-only routes already use the independently
 qualified token-row helper. Native optimizer/full-controller qualification,
 throughput, assets and production adoption remain separate. Extreme offsets
 are demonstrated corner cases, not measured causes of current poor task quality.
+Published source:661bbf395e90a060acde0ec0bbed84ef67b5cee3 on
+origin/codex/posttrain-math-parity. Focused command in the compatible runtime:
+python -m pytest tests/utils/test_selected_logprob_precision_on_cpu.py
+tests/utils/test_temperature_precision_on_cpu.py
+tests/workers/test_temperature_scoring_routes_on_cpu.py -q.
 
 Row-wise temperature-scoring source candidate (2026-10-01): the published
 full-FP32 division fixes score rounding but Qwen's8GB SAMPO backward gate fails
