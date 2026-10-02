@@ -83,7 +83,7 @@ class TrainingWorker(Worker, DistProfilerExtension):
     def __init__(self, config: TrainingWorkerConfig):
         Worker.__init__(self)
 
-        from verl.workers.engine import BaseEngine, EngineRegistry
+        from verl.workers.engine import BaseEngine
 
         initialize_global_process_group_ray(timeout_second=None)
 
@@ -132,14 +132,7 @@ class TrainingWorker(Worker, DistProfilerExtension):
         )
 
         self.model_config.model_type = self.config.model_type
-        self.engine: BaseEngine = EngineRegistry.new(
-            model_type=self.config.model_type,
-            backend=self.engine_config.strategy,
-            model_config=self.model_config,
-            engine_config=self.engine_config,
-            optimizer_config=self.optimizer_config,
-            checkpoint_config=self.checkpoint_config,
-        )
+        self.engine: BaseEngine = self.create_engine()
 
         # build dispatch info
         self._register_dispatch_collect_info(
@@ -154,6 +147,23 @@ class TrainingWorker(Worker, DistProfilerExtension):
             self.flops_counter = None
 
         self.loss_fn = None
+
+    def create_engine(self):
+        """Construct the selected engine before model initialization and dispatch.
+
+        Recipe subclasses may specialize the registered engine's model-output
+        handling while retaining native configuration and lifecycle ownership.
+        """
+        from verl.workers.engine import EngineRegistry
+
+        return EngineRegistry.new(
+            model_type=self.config.model_type,
+            backend=self.engine_config.strategy,
+            model_config=self.model_config,
+            engine_config=self.engine_config,
+            optimizer_config=self.optimizer_config,
+            checkpoint_config=self.checkpoint_config,
+        )
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
     def to(self, device, model=True, optimizer=True, grad=True):

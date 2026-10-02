@@ -2,6 +2,19 @@
 
 ## Status
 
+Engine factory extension candidate (2026-10-02): TrainingWorker.create_engine
+constructs the registry-selected engine before model initialization and dispatch
+registration. Recipe subclasses can specialize model-output handling without
+mutating an initialized engine or replacing native lifecycle ownership. Default
+construction forwards the same native configuration values. Ownership:
+verl/workers/engine_workers.py; regression:
+tests/workers/test_engine_factory_on_cpu.py (two CPU tests, default and recipe
+override; both pass against the native worker constructor with explicit platform
+fakes). Ruff and diff checks pass. Branch codex/resolved-engine-worker starts
+from acad5211619aef5ed80b25e9657262f08a436b03. Source publication is pending;
+this is not a versioned release, native GPU/driver qualification or consumer pin
+adoption. Rebase must preserve pre-dispatch construction and default forwarding.
+
 Selected-logprob cancellation source candidate (2026-10-01): normalize with
 batch-row log_softmax before gathering in logprobs_from_logits_v2 for every
 dtype. Absolute selected-logit minus logsumexp corrupts values and derivatives
