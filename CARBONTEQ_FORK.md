@@ -29,6 +29,11 @@ adapters exactly equal across layouts. Each restores172 named parameters and
 scheduler/loss/counters exactly. One action clips atupdate2 in each layout.
 FP16 counterpart is live; ordinary driver, other families, distributed and
 consumer release adoption remain open. Raw R100 receipts remain external.
+R100 FP16 now exits0 with exact all24 gradients/adapters across all3 layouts at
+both updates, scale128/no skips and exact native/population checkpoint resume:
+172 named parameters and4482 old scores, optimizer/scheduler/scaler/loss/
+counters restored. This closes retained scoped BF16/FP16 actor qualification;
+ordinary composition and broader family/distributed/release gates remain open.
 
 Rowwise adapter candidate (2026-10-02): lora_rowwise_compute is independently
 default-off and requires lora_fp32_compute. Three-dimensional adapter activations
