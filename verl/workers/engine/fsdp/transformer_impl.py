@@ -418,7 +418,24 @@ class FSDPEngine(BaseEngine):
             reduce_dtype = torch.float32
             buffer_dtype = torch.float32
 
-        mixed_precision = MixedPrecision(param_dtype=param_dtype, reduce_dtype=reduce_dtype, buffer_dtype=buffer_dtype)
+        precision_kwargs = {}
+        if self.engine_config.lora_fp32_compute:
+            from verl.utils.linear_precision import FP32AdapterLinear, prepare_fp32_lora_leaves
+
+            if self.model_config.bitsandbytes.enable:
+                raise ValueError("lora_fp32_compute is not qualified with bitsandbytes")
+            leaf_names = prepare_fp32_lora_leaves(module)
+            logger.info("Native FP32 LoRA compute on %d separately wrapped leaves", len(leaf_names))
+            precision_kwargs["_module_classes_to_ignore"] = (torch.nn.modules.batchnorm._BatchNorm, FP32AdapterLinear)
+
+        if self.engine_config.contiguous_linear_output_gradients:
+            from verl.utils.linear_precision import register_contiguous_linear_output_gradients
+
+            self._linear_gradient_layout_handles = register_contiguous_linear_output_gradients(module)
+
+        mixed_precision = MixedPrecision(
+            param_dtype=param_dtype, reduce_dtype=reduce_dtype, buffer_dtype=buffer_dtype, **precision_kwargs
+        )
 
         self._autocast_dtype = param_dtype
         # fp16 training requires loss scaling to avoid gradient underflow. Mirror the pattern

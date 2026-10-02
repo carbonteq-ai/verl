@@ -2,6 +2,25 @@
 
 ## Status
 
+Linear arithmetic controls candidate (2026-10-02): independent default-off
+FSDPEngineConfig.lora_fp32_compute and contiguous_linear_output_gradients.
+FP32 LoRA replaces ordinary A/B Linear leaves while retaining Parameter
+identities, initialized values and checkpoint paths, and uses native FSDP1
+separate mixed-precision wrapping (never ignored synchronization). FSDP2,
+non-FP32 initialization, QAT, bitsandbytes and specialized adapter leaves reject
+FP32 LoRA compute. Linear cotangent contiguity preserves values while controlling
+the demonstrated stride-sensitive backward GEMM. No universal batch invariance
+claim: external shared-boundary probes on source7cf68728 give BF16 packing
+relativeL2 3.562957e-7 and FP16 7.467330e-4; same-layout repeats are exact.
+The maintained candidate has not yet run native GPU model initialization.
+Files: verl/utils/linear_precision.py, workers/config/engine.py and
+workers/engine/fsdp/transformer_impl.py. Regression:
+tests/workers/test_linear_precision_on_cpu.py; 10 CPU cases pass, 37 focused
+precision/microbatch/determinism/accumulation cases pass, Ruff/diff pass.
+Rebase retains opt-in configuration and native gradient ownership until an
+equivalent upstream mechanism exists. Base9f594d6a; publication and consumer
+pins/runtime adoption remain open. No correctness probe files are included.
+
 LoRA target topology candidate (2026-10-02): base_model_merger.save_lora_adapter
 retains complete trained module paths rather than projection leaf names. Real
 Gemma export previously wrote q_proj/v_proj and could not reload because those

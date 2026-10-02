@@ -260,6 +260,12 @@ class FSDPEngineConfig(EngineConfig):
             in distributed training. Important: this will negatively impact performance, so only use it for
             debugging.
         mixed_precision (Optional[dict[str, Any]]): Mixed precision configuration for FSDP, default None
+        lora_fp32_compute (bool): Compute ordinary LoRA A/B Linear leaves in FP32,
+            separately wrapped by native FSDP1 without mixed precision. Requires
+            use_orig_params=True and model_dtype=fp32. Default False.
+        contiguous_linear_output_gradients (bool): Materialize Linear output
+            cotangents contiguously before backward GEMMs. Values and objective
+            are unchanged; this does not guarantee batch invariance. Default False.
         dtype (str): Mixed precision training param dtype, default "bfloat16"
         pad_to_length (bool): Round every packed micro-batch up to a multiple of
             ``pad_to_length_bucket`` tokens, so the packed shape only takes a handful of distinct
@@ -289,6 +295,9 @@ class FSDPEngineConfig(EngineConfig):
     model_dtype: str = "fp32"
     use_orig_params: bool = False
     mixed_precision: Optional[dict[str, Any]] = None
+    # Independent opt-in arithmetic controls, not a promise of batch invariance.
+    lora_fp32_compute: bool = False
+    contiguous_linear_output_gradients: bool = False
     ulysses_sequence_parallel_size: int = 1
     entropy_from_logits_with_chunking: bool = False
     entropy_from_logits_chunk_size: int = 2048
@@ -302,6 +311,13 @@ class FSDPEngineConfig(EngineConfig):
     def __post_init__(self):
         super().__post_init__()
         assert self.strategy in ["fsdp", "fsdp2"], f"strategy {self.strategy} not supported"
+        if self.lora_fp32_compute:
+            if self.strategy != "fsdp" or not self.use_orig_params:
+                raise ValueError("lora_fp32_compute requires FSDP1 with use_orig_params=True")
+            if self.model_dtype not in ("fp32", "float32"):
+                raise ValueError("lora_fp32_compute requires model_dtype=fp32 to preserve adapter initialization")
+            if self.qat.enable:
+                raise ValueError("lora_fp32_compute is not qualified with QAT")
 
 
 @dataclass
