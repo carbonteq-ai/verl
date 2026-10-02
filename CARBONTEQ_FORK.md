@@ -15,7 +15,16 @@ candidate has13 CPU regressions and40 focused native cases passing with
 Ruff/diff. External R93 FP16 applies two updates per layout from the same native
 checkpoint, scale128/no skips; saved24 gradients and adapter parameters match
 exactly at both updates. Maintained GPU, BF16, full resume and publication gates
-remain open. Basea44a5797. Retain opt-in fields/tests on rebase.
+were then qualified on published sourcec334d02aa7950b46ee7544c53edb43d2b401a953
+in native R94 BF16/FP16 runs with1587 verified staged files. In both precisions,
+all24 gradients and adapter parameters match exactly across records1/2 at both
+updates. Each layout restores172 named model parameters and4482 frozen old
+scores; resumed update2 exactly matches gradients, adapters, optimizer,
+scheduler, scaler, loss and counters. BF16 clipping support includes one action;
+FP16 uses scale128 without skips. Scope is the retained single-rank LFM actor
+path, not ordinary admission, all families or distributed execution. Physical
+padding budgeting, runtime adoption and release gates remain open. Basea44a5797.
+Retain opt-in fields/tests on rebase.
 
 Linear arithmetic controls candidate (2026-10-02): independent default-off
 FSDPEngineConfig.lora_fp32_compute and contiguous_linear_output_gradients.
