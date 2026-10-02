@@ -266,6 +266,11 @@ class FSDPEngineConfig(EngineConfig):
         contiguous_linear_output_gradients (bool): Materialize Linear output
             cotangents contiguously before backward GEMMs. Values and objective
             are unchanged; this does not guarantee batch invariance. Default False.
+        lora_rowwise_compute (bool): Evaluate each leading batch row of 3D FP32
+            adapter activations with a separate Linear GEMM. Requires
+            lora_fp32_compute=True. Keeps adapter GEMM shape independent of pack
+            row count when context widths match; extra kernel launches can cost
+            throughput. Does not control backbone arithmetic. Default False.
         dtype (str): Mixed precision training param dtype, default "bfloat16"
         pad_to_length (bool): Round every packed micro-batch up to a multiple of
             ``pad_to_length_bucket`` tokens, so the packed shape only takes a handful of distinct
@@ -297,6 +302,7 @@ class FSDPEngineConfig(EngineConfig):
     mixed_precision: Optional[dict[str, Any]] = None
     # Independent opt-in arithmetic controls, not a promise of batch invariance.
     lora_fp32_compute: bool = False
+    lora_rowwise_compute: bool = False
     contiguous_linear_output_gradients: bool = False
     ulysses_sequence_parallel_size: int = 1
     entropy_from_logits_with_chunking: bool = False
@@ -311,6 +317,8 @@ class FSDPEngineConfig(EngineConfig):
     def __post_init__(self):
         super().__post_init__()
         assert self.strategy in ["fsdp", "fsdp2"], f"strategy {self.strategy} not supported"
+        if self.lora_rowwise_compute and not self.lora_fp32_compute:
+            raise ValueError("lora_rowwise_compute requires lora_fp32_compute=True")
         if self.lora_fp32_compute:
             if self.strategy != "fsdp" or not self.use_orig_params:
                 raise ValueError("lora_fp32_compute requires FSDP1 with use_orig_params=True")

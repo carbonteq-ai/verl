@@ -2,6 +2,21 @@
 
 ## Status
 
+Rowwise adapter candidate (2026-10-02): lora_rowwise_compute is independently
+default-off and requires lora_fp32_compute. Three-dimensional adapter activations
+are evaluated per leading batch row so the GEMM shape does not change with pack
+row count at equal context widths. Two-dimensional inputs retain normal Linear
+semantics. Extra kernel launches can cost throughput; this does not control
+backbone kernels, context padding or global gradient accumulation order.
+External R90 locates tinyFP32 LoRA input-backward differences crossingFP16
+rounding boundaries at updated parameters. R92 fixed-row GEMM control exits0
+with all24 gradient tensors exactly equal across records1/2 and repeats. Native
+candidate has13 CPU regressions and40 focused native cases passing with
+Ruff/diff. External R93 FP16 applies two updates per layout from the same native
+checkpoint, scale128/no skips; saved24 gradients and adapter parameters match
+exactly at both updates. Maintained GPU, BF16, full resume and publication gates
+remain open. Basea44a5797. Retain opt-in fields/tests on rebase.
+
 Linear arithmetic controls candidate (2026-10-02): independent default-off
 FSDPEngineConfig.lora_fp32_compute and contiguous_linear_output_gradients.
 FP32 LoRA replaces ordinary A/B Linear leaves while retaining Parameter

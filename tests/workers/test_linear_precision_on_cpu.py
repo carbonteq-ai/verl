@@ -102,5 +102,35 @@ def test_precision_config_rejects_unqualified_combinations(kwargs, match):
 
 def test_precision_controls_default_off_and_qualified_config_constructs():
     default = FSDPEngineConfig()
-    assert not default.lora_fp32_compute and not default.contiguous_linear_output_gradients
+    assert not default.lora_fp32_compute
+    assert not default.contiguous_linear_output_gradients
+    assert not default.lora_rowwise_compute
     FSDPEngineConfig(lora_fp32_compute=True, use_orig_params=True, contiguous_linear_output_gradients=True)
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_rowwise_adapter_preserves_each_context_forward_and_input_gradient(dtype):
+    model = adapter_model()
+    prepare_fp32_lora_leaves(model, rowwise_compute=True)
+    layer = model.lora_A["default"]
+    values = torch.randn(2, 5, 3).to(dtype)
+    batched = values.clone().requires_grad_()
+    separate = [row.clone().requires_grad_() for row in values]
+    cotangent = torch.randn(2, 5, 2)
+    packed_output = layer(batched)
+    packed_output.backward(cotangent)
+    packed_weight_gradient = layer.weight.grad.clone()
+    layer.weight.grad = None
+    for index, row in enumerate(separate):
+        output = layer(row)
+        torch.testing.assert_close(output, packed_output[index], rtol=0, atol=0)
+        output.backward(cotangent[index])
+        torch.testing.assert_close(row.grad, batched.grad[index], rtol=0, atol=0)
+    torch.testing.assert_close(layer.weight.grad, packed_weight_gradient)
+    with pytest.raises(ValueError, match="nonempty batch"):
+        layer(torch.empty(0, 5, 3))
+
+
+def test_rowwise_adapter_requires_fp32_compute():
+    with pytest.raises(ValueError, match="requires lora_fp32_compute"):
+        FSDPEngineConfig(lora_rowwise_compute=True)

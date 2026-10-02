@@ -8,14 +8,20 @@ from torch.nn import functional as F
 class FP32AdapterLinear(nn.Linear):
     """A LoRA leaf whose arithmetic stays FP32 inside a mixed-precision backbone."""
 
+    rowwise_compute = False
+
     def forward(self, inputs):
         if self.weight.dtype != torch.float32:
             raise RuntimeError("FP32 adapter compute requires FP32 native parameter views")
         with torch.autocast(device_type=inputs.device.type, enabled=False):
+            if self.rowwise_compute and inputs.ndim == 3:
+                if inputs.shape[0] == 0:
+                    raise ValueError("Rowwise adapter compute requires a nonempty batch")
+                return torch.stack([F.linear(row.float(), self.weight, self.bias) for row in inputs], dim=0)
             return F.linear(inputs.float(), self.weight, self.bias)
 
 
-def prepare_fp32_lora_leaves(module):
+def prepare_fp32_lora_leaves(module, *, rowwise_compute=False):
     """Replace ordinary PEFT A/B leaves without changing values, identities or state keys.
 
     FSDP must separately wrap these leaves with mixed precision disabled. Merely
@@ -39,6 +45,7 @@ def prepare_fp32_lora_leaves(module):
         replacement = FP32AdapterLinear(child.in_features, child.out_features, child.bias is not None, device="meta")
         replacement.weight = child.weight
         replacement.bias = child.bias
+        replacement.rowwise_compute = rowwise_compute
         replacement.train(child.training)
         parent_name, _, leaf_name = name.rpartition(".")
         module.get_submodule(parent_name)._modules[leaf_name] = replacement

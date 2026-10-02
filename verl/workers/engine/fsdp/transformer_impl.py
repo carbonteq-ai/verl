@@ -424,7 +424,7 @@ class FSDPEngine(BaseEngine):
 
             if self.model_config.bitsandbytes.enable:
                 raise ValueError("lora_fp32_compute is not qualified with bitsandbytes")
-            leaf_names = prepare_fp32_lora_leaves(module)
+            leaf_names = prepare_fp32_lora_leaves(module, rowwise_compute=self.engine_config.lora_rowwise_compute)
             logger.info("Native FP32 LoRA compute on %d separately wrapped leaves", len(leaf_names))
             precision_kwargs["_module_classes_to_ignore"] = (torch.nn.modules.batchnorm._BatchNorm, FP32AdapterLinear)
 
