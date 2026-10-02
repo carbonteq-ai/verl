@@ -2,6 +2,20 @@
 
 ## Status
 
+Declared native microbatch candidate (2026-10-02): engine/utils.py accepts
+optional ordered micro_batch_sizes on static batches. Positive sizes must
+cover all rows, preserve force_group_size, satisfy requested count limits and
+agree in count across data-parallel ranks. The default uniform/static and
+dynamic paths are unchanged. This preserves externally resolved execution
+boundaries and a partial final pack inside the existing native backward and
+single optimizer lifecycle. Regression:
+tests/workers/test_declared_microbatches_on_cpu.py. CPU gradient/coverage tests
+pass (14 cases, including real two-process Gloo rank validation); native GPU
+packing and distributed model execution qualification remain open.
+Candidate base 83c35675fcfe3dc5d0be47a66f624b0e1024ff6c; unpublished.
+Rebase by retaining the opt-in metadata branch before default scheduling;
+remove it only when upstream offers equivalent ordered partial-tail support.
+
 Strict full-determinism candidate (2026-10-02): enable_full_determinism uses
 torch.use_deterministic_algorithms(True, warn_only=False). PyTorch SDPA Flash
 Attention backward remains nondeterministic in warn-only mode, even with the

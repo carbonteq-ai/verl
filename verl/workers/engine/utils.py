@@ -108,6 +108,43 @@ def prepare_micro_batches(
 
     force_group_size = tu.get_non_tensor_data(data=data, key="force_group_size", default=1)
 
+    # A caller may already have resolved exact ordered execution boundaries.
+    # Preserve those boundaries (including a smaller final pack) instead of
+    # rebalancing or requiring uniform-size divisibility. This only partitions
+    # forward/backward work; the engine still owns one optimizer step.
+    declared_sizes = tu.get_non_tensor_data(data=data, key="micro_batch_sizes", default=None)
+    if declared_sizes is not None:
+        if use_dynamic_bsz:
+            raise ValueError("declared microbatch sizes cannot select dynamic rebalancing")
+        declarations = [(declared_sizes, len(data), force_group_size)]
+        if torch.distributed.is_initialized() and same_micro_num_in_dp:
+            declarations = [None] * torch.distributed.get_world_size(dp_group)
+            torch.distributed.all_gather_object(
+                declarations, (declared_sizes, len(data), force_group_size), group=dp_group
+            )
+        counts = []
+        for sizes, length, group_size in declarations:
+            if (not isinstance(sizes, (tuple, list)) or not sizes
+                    or any(type(size) is not int or size <= 0 for size in sizes)):
+                raise ValueError("declared microbatch sizes must be positive integers")
+            if type(group_size) is not int or group_size <= 0 or any(size % group_size for size in sizes):
+                raise ValueError("declared microbatches must preserve force_group_size")
+            if sum(sizes) != length:
+                raise ValueError("declared microbatches must cover every row exactly once")
+            counts.append(len(sizes))
+        if len(set(counts)) != 1:
+            raise ValueError("declared microbatch counts differ across data-parallel ranks")
+        if num_batches_divided_by is not None and counts[0] % num_batches_divided_by:
+            raise ValueError("declared microbatch count violates requested divisibility")
+        if min_num_micro_batch is not None and counts[0] < min_num_micro_batch:
+            raise ValueError("declared microbatch count is below the requested minimum")
+        offset = 0
+        micro_batches = []
+        for size in declared_sizes:
+            micro_batches.append(tu.index_select_tensor_dict(data, list(range(offset, offset + size))))
+            offset += size
+        return micro_batches, None
+
     if use_dynamic_bsz:
         assert "max_token_len_per_gpu" in data.keys(), "max_token_len_per_gpu must be set when use_dynamic_bsz is True"
         max_token_len_per_gpu = data["max_token_len_per_gpu"]
