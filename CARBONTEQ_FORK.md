@@ -2,6 +2,21 @@
 
 ## Status
 
+Strict full-determinism candidate (2026-10-02): enable_full_determinism uses
+torch.use_deterministic_algorithms(True, warn_only=False). PyTorch SDPA Flash
+Attention backward remains nondeterministic in warn-only mode, even with the
+existing environment flags. An instrumented ordinary LFM BF16 resume verifies
+247 restored state tensors exactly, then demonstrates unequal gradients on
+three identical backwards; strict mode makes all 24 gradient tensors identical
+across three repeats. No optimizer update is performed by those diagnostics.
+Ownership: verl/workers/engine/utils.py; regression:
+tests/workers/test_full_determinism_on_cpu.py (one CPU case passes), Ruff/diff
+checks pass. Base: 77fe49a9de909f036aa72d8568cc957d226b1e7c on
+codex/resolved-engine-worker. Full determinism is opt-in; unsupported native
+operations now raise rather than silently retaining nondeterminism. Fresh full
+BF16/FP16 job continuation, distributed qualification, publication and consumer
+pin/runtime adoption remain gates. Rebase must retain strict kernel selection.
+
 V1 empty-batch cleanup candidate (2026-10-02): recipe extensions can apply
 another optimizer update from retained evidence without allocating TransferQueue
 keys. V1 fit skips kv_clear for an empty batch, preserving save/log/counter

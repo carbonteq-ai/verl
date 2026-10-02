@@ -56,7 +56,10 @@ def enable_full_determinism(seed: int):
     torch.manual_seed(seed)
     device_manual_seed(seed)
     device_manual_seed_all(seed)
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    # Warn-only mode lets SDPA select a nondeterministic Flash Attention
+    # backward. Full determinism must select deterministic kernels or fail
+    # explicitly when a backend cannot provide them.
+    torch.use_deterministic_algorithms(True, warn_only=False)
     # Enable CUDNN deterministic mode
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
