@@ -11,7 +11,10 @@ with missing weights; exact language target and output checks fail before repair
 Tests: tests/model_merger/test_lora_target_topology_on_cpu.py and the existing
 LFM2 export/reload test, now checking full trained topology. Candidate base
 62db2a41; 18 focused topology/LFM/output validation tests pass with Ruff/diff.
-Actual Gemma adapter reconstruction/reload remains a gate. Rebase
+Published source3a4812cb162a58cf8fffdd582760b2353093be61 passes actual Gemma
+CPU adapter reconstruction/reload from the retained checkpoint and exported
+base model: 50 exact language targets, 100 matching tensors at export dtype,
+and exact zero-adapter base logits. Informative training remains a gate. Rebase
 retains full-path export until an equivalent upstream mechanism is available.
 
 Gemma replicated-buffer export backport (2026-10-02): adopt merged upstream
@@ -21,7 +24,8 @@ disagreement instead of concatenating it. This fixes the observed ordinary
 Gemma E2B single-rank scalar-buffer export crash and multi-rank buffer shapes.
 Files: verl/model_merger/fsdp_model_merger.py and the upstream regression
 tests/model_merger/test_fsdp_merge_non_dtensor_shards_on_cpu.py. Candidate base
-d3ca05a4; native export from the retained Gemma checkpoint remains a gate.
+d3ca05a4; source62db2a41 successfully exports the retained native Gemma
+checkpoint on CPU. Adapter reload requires the full-path repair above.
 On rebase, remove the backport once upstream includes #7610. No new upstream
 PR is needed. Open #8016 separately fixes mesh discovery; it is not adopted here.
 
