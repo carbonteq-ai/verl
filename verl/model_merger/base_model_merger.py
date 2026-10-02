@@ -335,7 +335,10 @@ class BaseModelMerger(ABC):
 
         for name in lora_params_names:
             lora_key = name.replace(".default.weight", ".weight")
-            target_modules.add(lora_key.split(".")[-3])
+            # Keep the trained module path. A leaf such as q_proj can also
+            # match an untrained vision/audio tower when the adapter reloads.
+            # PEFT targets address the underlying model, without its wrapper.
+            target_modules.add(lora_key.rsplit(".", 2)[0].removeprefix("base_model.model."))
             lora_params[lora_key] = state_dict.pop(name)
 
         inferred_lora_rank = min(lora_params[lora_key].shape[0], lora_params[lora_key].shape[1])
@@ -374,7 +377,7 @@ class BaseModelMerger(ABC):
         peft_dict = {
             "r": lora_rank,
             "lora_alpha": lora_alpha,
-            "target_modules": list(target_modules),
+            "target_modules": sorted(target_modules),
         }
         if task_type is not None:
             peft_dict["task_type"] = task_type
@@ -389,7 +392,7 @@ class BaseModelMerger(ABC):
             if hasattr(peft_config["peft_type"], "value")
             else (peft_config["peft_type"] or None)
         )
-        peft_config["target_modules"] = list(peft_config["target_modules"])
+        peft_config["target_modules"] = sorted(peft_config["target_modules"])
 
         lora_path = os.path.join(self.config.target_dir, "lora_adapter")
         os.makedirs(lora_path, exist_ok=True)

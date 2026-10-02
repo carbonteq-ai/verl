@@ -64,6 +64,8 @@ def test_lfm2_all_linear_lora_export_reloads_with_identical_outputs(tmp_path):
     (tmp_path / "actor" / "lora_train_meta.json").write_text(json.dumps({"r": 4, "lora_alpha": 8}))
     # The FSDP checkpoint carries the PEFT model's own parameter names.
     state_dict = {name: tensor.detach().clone() for name, tensor in peft_model.state_dict().items()}
+    trained_targets = {name for name, module in peft_model.base_model.model.named_modules()
+                       if hasattr(module, "lora_A")}
 
     target = tmp_path / "model"
     merger = FSDPModelMerger(
@@ -80,7 +82,8 @@ def test_lfm2_all_linear_lora_export_reloads_with_identical_outputs(tmp_path):
     adapter_config = json.loads((target / "lora_adapter" / "adapter_config.json").read_text())
     # PEFT "all-linear": attention q/k/v/out_proj, short-convolution in/out_proj,
     # feed-forward w1/w2/w3; never the tied output head.
-    assert set(adapter_config["target_modules"]) == {
+    assert set(adapter_config["target_modules"]) == trained_targets
+    assert {name.rsplit(".", 1)[-1] for name in adapter_config["target_modules"]} == {
         "q_proj",
         "k_proj",
         "v_proj",

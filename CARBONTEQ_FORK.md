@@ -2,6 +2,18 @@
 
 ## Status
 
+LoRA target topology candidate (2026-10-02): base_model_merger.save_lora_adapter
+retains complete trained module paths rather than projection leaf names. Real
+Gemma export previously wrote q_proj/v_proj and could not reload because those
+names also select wrapped vision/audio projections. A CPU regression with two
+model towers demonstrates the old exporter creating an untrained vision adapter
+with missing weights; exact language target and output checks fail before repair.
+Tests: tests/model_merger/test_lora_target_topology_on_cpu.py and the existing
+LFM2 export/reload test, now checking full trained topology. Candidate base
+62db2a41; 18 focused topology/LFM/output validation tests pass with Ruff/diff.
+Actual Gemma adapter reconstruction/reload remains a gate. Rebase
+retains full-path export until an equivalent upstream mechanism is available.
+
 Gemma replicated-buffer export backport (2026-10-02): adopt merged upstream
 PR #7610, commit ddb96db19850bf820fe0aa13e4cb71b21f285869. The merger's
 merge_non_dtensor_shards retains one plain replicated tensor and rejects rank
