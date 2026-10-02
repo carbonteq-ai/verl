@@ -21,6 +21,14 @@ and Ruff pass. GPU and ordinary-driver qualification remain open. This replaces
 external global overrides in retained qualification, not algorithm semantics.
 No raw correctness tools or receipts are committed. Retain fields/helper/mode
 integration on rebase until equivalent native scoped configuration exists.
+Published sourcec45392d22df0c1ab2258e9c0675d3a03093094af qualifies native
+R100 BF16 on1589 hashed files with no external backend or padding override:
+three row-count/budget layouts, two applied updates, all24 saved gradients and
+adapters exactly equal across layouts. Each restores172 named parameters and
+4482 old scores; continued update2 matches gradient/parameter/optimizer/
+scheduler/loss/counters exactly. One action clips atupdate2 in each layout.
+FP16 counterpart is live; ordinary driver, other families, distributed and
+consumer release adoption remain open. Raw R100 receipts remain external.
 
 Rowwise adapter candidate (2026-10-02): lora_rowwise_compute is independently
 default-off and requires lora_fp32_compute. Three-dimensional adapter activations
