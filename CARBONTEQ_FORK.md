@@ -14,8 +14,10 @@ tests/workers/test_full_determinism_on_cpu.py (one CPU case passes), Ruff/diff
 checks pass. Base: 77fe49a9de909f036aa72d8568cc957d226b1e7c on
 codex/resolved-engine-worker. Full determinism is opt-in; unsupported native
 operations now raise rather than silently retaining nondeterminism. Fresh full
-BF16/FP16 job continuation, distributed qualification, publication and consumer
-pin/runtime adoption remain gates. Rebase must retain strict kernel selection.
+BF16/FP16 job continuation, distributed qualification and consumer pin/runtime
+adoption remain gates. Published source:
+8f0de2365f1041954b67f74df5a14c7ba0532755 on
+origin/codex/resolved-engine-worker. Rebase must retain strict kernel selection.
 
 V1 empty-batch cleanup candidate (2026-10-02): recipe extensions can apply
 another optimizer update from retained evidence without allocating TransferQueue
