@@ -271,6 +271,13 @@ class FSDPEngineConfig(EngineConfig):
             lora_fp32_compute=True. Keeps adapter GEMM shape independent of pack
             row count when context widths match; extra kernel launches can cost
             throughput. Does not control backbone arithmetic. Default False.
+        full_precision_matmul (bool): Disable TF32 and reduced half-precision
+            GEMM accumulation inside native train/eval scopes. Restores runtime
+            settings on exit. Does not change activation dtype. Default False.
+        math_sdpa (bool): Select math SDPA with full-precision intermediate
+            reductions inside native train/eval scopes. Extra memory/latency
+            may be substantial. Default False. Arithmetic scopes serialize
+            cooperating engines; external concurrent PyTorch work is unsupported.
         dtype (str): Mixed precision training param dtype, default "bfloat16"
         pad_to_length (bool): Round every packed micro-batch up to a multiple of
             ``pad_to_length_bucket`` tokens, so the packed shape only takes a handful of distinct
@@ -304,6 +311,8 @@ class FSDPEngineConfig(EngineConfig):
     lora_fp32_compute: bool = False
     lora_rowwise_compute: bool = False
     contiguous_linear_output_gradients: bool = False
+    full_precision_matmul: bool = False
+    math_sdpa: bool = False
     ulysses_sequence_parallel_size: int = 1
     entropy_from_logits_with_chunking: bool = False
     entropy_from_logits_chunk_size: int = 2048

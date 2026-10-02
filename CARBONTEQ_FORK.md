@@ -2,6 +2,26 @@
 
 ## Status
 
+Scoped engine arithmetic candidate (2026-10-02), basee7be1c24: independent
+default-off FSDPEngineConfig.full_precision_matmul and math_sdpa cover the
+entire native FSDP train/eval context, including backward and recomputation.
+The former disables TF32 and reduced FP16/BF16 GEMM accumulation without
+changing activation dtype. The latter selects math SDPA and disables reduced
+half-precision math attention intermediates. A shared reentrant lock serializes
+cooperating engine scopes; nested scopes and exceptions restore prior runtime
+switches. Uncoordinated external PyTorch threads are outside this contract.
+Kernel choice can increase memory and latency; neither setting guarantees
+arbitrary batch-shape invariance. Defaults retain runtime behavior. Older Torch
+without math reduction controls rejects math_sdpa before mutations; absence of
+the newer opt-in FP16 GEMM accumulator retains the older full accumulator.
+Files: verl/utils/engine_arithmetic.py, workers/config/engine.py and native
+FSDP transformer_impl.py. Regression tests/workers/test_engine_arithmetic_on_cpu.py
+has14 cases;46 focused arithmetic/LoRA/determinism/accumulation/packing tests
+and Ruff pass. GPU and ordinary-driver qualification remain open. This replaces
+external global overrides in retained qualification, not algorithm semantics.
+No raw correctness tools or receipts are committed. Retain fields/helper/mode
+integration on rebase until equivalent native scoped configuration exists.
+
 Rowwise adapter candidate (2026-10-02): lora_rowwise_compute is independently
 default-off and requires lora_fp32_compute. Three-dimensional adapter activations
 are evaluated per leading batch row so the GEMM shape does not change with pack

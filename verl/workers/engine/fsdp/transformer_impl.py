@@ -18,6 +18,7 @@ The concrete Engine implementation using PyTorch FullyShardedDataParallel (FSDP)
 import gc
 import logging
 import os
+import sys
 import warnings
 from contextlib import contextmanager, nullcontext
 from inspect import signature
@@ -40,6 +41,7 @@ from verl.utils.checkpoint.fsdp_checkpoint_manager import FSDPCheckpointManager
 from verl.utils.dataset.dataset_utils import DatasetPadMode
 from verl.utils.debug import log_gpu_memory_usage
 from verl.utils.device import get_device_id, get_device_name
+from verl.utils.engine_arithmetic import engine_arithmetic
 from verl.utils.fsdp_utils import (
     CPUOffloadPolicy,
     FSDPModule,
@@ -1148,24 +1150,36 @@ class EngineEvalModeCtx(BaseEngineCtx):
 
     def __enter__(self):
         assert isinstance(self.engine, FSDPEngine)
-        super().__enter__()
-        self.prev_sp_group = get_ulysses_sequence_parallel_group()
-        set_ulysses_sequence_parallel_group(self.engine.ulysses_parallel_group)
-        self.engine.module.eval()
+        self.arithmetic_context = engine_arithmetic(
+            full_precision_matmul=self.engine.engine_config.full_precision_matmul,
+            math_sdpa=self.engine.engine_config.math_sdpa,
+        )
+        self.arithmetic_context.__enter__()
+        try:
+            super().__enter__()
+            self.prev_sp_group = get_ulysses_sequence_parallel_group()
+            set_ulysses_sequence_parallel_group(self.engine.ulysses_parallel_group)
+            self.engine.module.eval()
+        except BaseException:
+            self.arithmetic_context.__exit__(*sys.exc_info())
+            raise
 
     def __exit__(self, exc_type, exc_value, traceback):
         assert isinstance(self.engine, FSDPEngine)
-        set_ulysses_sequence_parallel_group(self.prev_sp_group)
+        try:
+            set_ulysses_sequence_parallel_group(self.prev_sp_group)
 
-        # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
-        # unshard the root FSDP module
-        if self.engine.engine_config.fsdp_size > 1:
-            if fsdp_version(self.engine.module) == 1:
-                self.engine.module._handle.reshard(True)
-            elif fsdp_version(self.engine.module) == 2:
-                self.engine.module.reshard()
+            # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
+            # unshard the root FSDP module
+            if self.engine.engine_config.fsdp_size > 1:
+                if fsdp_version(self.engine.module) == 1:
+                    self.engine.module._handle.reshard(True)
+                elif fsdp_version(self.engine.module) == 2:
+                    self.engine.module.reshard()
 
-        super().__exit__(exc_type, exc_value, traceback)
+            super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.arithmetic_context.__exit__(exc_type, exc_value, traceback)
 
 
 class EngineTrainModeCtx(BaseEngineCtx):
@@ -1174,17 +1188,29 @@ class EngineTrainModeCtx(BaseEngineCtx):
 
     def __enter__(self):
         assert isinstance(self.engine, FSDPEngine)
-        super().__enter__()
-        self.prev_sp_group = get_ulysses_sequence_parallel_group()
-        set_ulysses_sequence_parallel_group(self.engine.ulysses_parallel_group)
-        self.engine.module.train()
+        self.arithmetic_context = engine_arithmetic(
+            full_precision_matmul=self.engine.engine_config.full_precision_matmul,
+            math_sdpa=self.engine.engine_config.math_sdpa,
+        )
+        self.arithmetic_context.__enter__()
+        try:
+            super().__enter__()
+            self.prev_sp_group = get_ulysses_sequence_parallel_group()
+            set_ulysses_sequence_parallel_group(self.engine.ulysses_parallel_group)
+            self.engine.module.train()
+        except BaseException:
+            self.arithmetic_context.__exit__(*sys.exc_info())
+            raise
 
     def __exit__(self, exc_type, exc_value, traceback):
         assert isinstance(self.engine, FSDPEngine)
-        set_ulysses_sequence_parallel_group(self.prev_sp_group)
-        if self.zero_grad_on_exit or exc_type is not None:
-            self.engine.optimizer_zero_grad()
-        super().__exit__(exc_type, exc_value, traceback)
+        try:
+            set_ulysses_sequence_parallel_group(self.prev_sp_group)
+            if self.zero_grad_on_exit or exc_type is not None:
+                self.engine.optimizer_zero_grad()
+            super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.arithmetic_context.__exit__(exc_type, exc_value, traceback)
 
 
 @EngineRegistry.register(model_type="language_model", backend=["fsdp", "fsdp2"], device=["cuda", "npu"])
