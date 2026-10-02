@@ -503,6 +503,20 @@ qualification, Posttrain capability/mapping adoption, publication and immutable
 runtime pins remain open. CPU wrapper tests do not qualify unavailable optional
 model engines or production training.
 
+**Release `0.9.0.post9`.** Post9 is the post8 release plus the scoped engine
+arithmetic candidate through `c45392d2` and its qualification records (branch
+`codex/resolved-engine-worker`): native SAMPO normalized credit and stable KL,
+FP16 scaler persistence and offload overflow recovery, row-wise half-precision
+logits, selected-logprob and entropy offset stability, temperature promotion,
+declared ordered microbatches, strict determinism, retained-evidence steps,
+the V1 task-runner and engine-factory extension points, LoRA module-path
+export, opt-in LoRA precision/Linear gradient layout and row-wise FP32 LoRA
+arithmetic, and the FSDP merger buffer fix. All new options are opt-in;
+defaults keep post8 behavior. The 310 CPU regressions added since post8 pass.
+Posttrain R134 qualifies native SAMPO active collection on this source
+(BF16/FP16 two-update collection and exact checkpoint continuation). The wheel
+and sdist SHA-256 values are recorded in the receipt commit after the tag.
+
 **Release candidate `0.9.0.post8`.** Post8 is the post7 asset receipt
 (`07ecac23`) plus one fix, "Agent-loop defaults declared in the trainer
 config" under "Maintained delta": since post2 the agent-loop manager read
