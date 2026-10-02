@@ -2,6 +2,18 @@
 
 ## Status
 
+Plain V1 recipe runner extension candidate (2026-10-02): expose TaskRunnerV1Base
+before Ray decoration and retain TaskRunnerV1 as its default Ray actor wrapper.
+Recipes can subclass the native manager lifecycle without Ray-private metadata
+or replacing the global trainer registry. Ownership: verl/trainer/main_ppo.py;
+regression: tests/trainer/test_task_runner_extension_on_cpu.py. Native base
+construction/subclassing and existing Ray wrapper availability pass. Consumer
+lifecycle tests additionally cover queue initialization, manager initialization,
+fit and failure cleanup. Base: 8ae3500d80c1ec48179d786766afe6b4931bacc0 on
+codex/resolved-engine-worker. Publication identity is recorded after commit;
+this is not a versioned release, GPU qualification or consumer pin adoption.
+Rebase must preserve the default wrapper and plain subclassable base together.
+
 Engine factory extension candidate (2026-10-02): TrainingWorker.create_engine
 constructs the registry-selected engine before model initialization and dispatch
 registration. Recipe subclasses can specialize model-output handling without

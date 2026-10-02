@@ -100,8 +100,7 @@ def run_ppo(config, task_runner_class) -> None:
         ray.timeline(filename=timeline_json_file)
 
 
-@ray.remote
-class TaskRunnerV1:
+class TaskRunnerV1Base:
     """V1 TaskRunner for PPO training."""
 
     def __init__(self):
@@ -162,6 +161,11 @@ class TaskRunnerV1:
                     tracking.finish(exit_code=0 if succeeded else 1)
             finally:
                 tq.close()
+
+
+@ray.remote
+class TaskRunnerV1(TaskRunnerV1Base):
+    """Default Ray wrapper; recipes may subclass TaskRunnerV1Base before wrapping."""
 
 
 @hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
