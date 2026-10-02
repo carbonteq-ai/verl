@@ -12,7 +12,9 @@ single optimizer lifecycle. Regression:
 tests/workers/test_declared_microbatches_on_cpu.py. CPU gradient/coverage tests
 pass (14 cases, including real two-process Gloo rank validation); native GPU
 packing and distributed model execution qualification remain open.
-Candidate base 83c35675fcfe3dc5d0be47a66f624b0e1024ff6c; unpublished.
+Candidate base 83c35675fcfe3dc5d0be47a66f624b0e1024ff6c; published source
+7cf687284ba054e836b8ce34475a3e695b3dd22b on origin/codex/resolved-engine-worker.
+Consumer pins and immutable release assets remain unchanged.
 Rebase by retaining the opt-in metadata branch before default scheduling;
 remove it only when upstream offers equivalent ordered partial-tail support.
 
