@@ -8,7 +8,8 @@ keys. V1 fit skips kv_clear for an empty batch, preserving save/log/counter
 handling. The CPU regression executes the actual fit loop over one allocated
 and one empty batch; all 15 trainer-base CPU tests pass. Base:
 ef5aac6ff92d5a69f72cfe222f0a409af4220314 on codex/resolved-engine-worker.
-Source publication is pending; pins and runtime adoption remain separate.
+Published source: 076072b92baf336c2e18e9f38bf7434e4a5f3cb7 on
+origin/codex/resolved-engine-worker. Pins and runtime adoption remain separate.
 
 Plain V1 recipe runner extension candidate (2026-10-02): expose TaskRunnerV1Base
 before Ray decoration and retain TaskRunnerV1 as its default Ray actor wrapper.
