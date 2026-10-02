@@ -12,14 +12,19 @@ FP32 LoRA compute. Linear cotangent contiguity preserves values while controllin
 the demonstrated stride-sensitive backward GEMM. No universal batch invariance
 claim: external shared-boundary probes on source7cf68728 give BF16 packing
 relativeL2 3.562957e-7 and FP16 7.467330e-4; same-layout repeats are exact.
-The maintained candidate has not yet run native GPU model initialization.
+Published sourcec62c4468635ac52e70598c1ae0c546676c203347 passes native BF16
+GPU initialization and shared post-update backward on1587 hashed staged files:
+24 separately wrappedFP32 leaves,117 layout hooks, unchanged model, exact
+repeats, packing relativeL2 3.562957e-7 matching the external prototype. This
+stops before optimizer application; FP16 and full updates/resume remain gates.
 Files: verl/utils/linear_precision.py, workers/config/engine.py and
 workers/engine/fsdp/transformer_impl.py. Regression:
 tests/workers/test_linear_precision_on_cpu.py; 10 CPU cases pass, 37 focused
 precision/microbatch/determinism/accumulation cases pass, Ruff/diff pass.
 Rebase retains opt-in configuration and native gradient ownership until an
-equivalent upstream mechanism exists. Base9f594d6a; publication and consumer
-pins/runtime adoption remain open. No correctness probe files are included.
+equivalent upstream mechanism exists. Base9f594d6a; source is published on
+origin/codex/resolved-engine-worker. Consumer pins/runtime adoption remain open.
+No correctness probe files are included.
 
 LoRA target topology candidate (2026-10-02): base_model_merger.save_lora_adapter
 retains complete trained module paths rather than projection leaf names. Real
