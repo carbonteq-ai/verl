@@ -10,7 +10,8 @@ regression: tests/trainer/test_task_runner_extension_on_cpu.py. Native base
 construction/subclassing and existing Ray wrapper availability pass. Consumer
 lifecycle tests additionally cover queue initialization, manager initialization,
 fit and failure cleanup. Base: 8ae3500d80c1ec48179d786766afe6b4931bacc0 on
-codex/resolved-engine-worker. Publication identity is recorded after commit;
+codex/resolved-engine-worker. Published source:
+70baba82c0b2b0a8981089ca62c5ab474efe1816 on origin/codex/resolved-engine-worker;
 this is not a versioned release, GPU qualification or consumer pin adoption.
 Rebase must preserve the default wrapper and plain subclassable base together.
 
