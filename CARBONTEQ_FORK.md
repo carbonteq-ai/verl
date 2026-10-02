@@ -514,8 +514,13 @@ export, opt-in LoRA precision/Linear gradient layout and row-wise FP32 LoRA
 arithmetic, and the FSDP merger buffer fix. All new options are opt-in;
 defaults keep post8 behavior. The 310 CPU regressions added since post8 pass.
 Posttrain R134 qualifies native SAMPO active collection on this source
-(BF16/FP16 two-update collection and exact checkpoint continuation). The wheel
-and sdist SHA-256 values are recorded in the receipt commit after the tag.
+(BF16/FP16 two-update collection and exact checkpoint continuation). Tag
+`carbonteq-v0.9.0.post9` at release commit
+`8e513f3bf3bfccb4c413846b5eb184e0b42ea9d8`; wheel SHA-256
+`13930e0f7699fd043beeb2ab2c0b4814499fa195611b4d08f93a798a5fd89c40`, sdist
+SHA-256 `726f02c69bbbc6ad8e182cd599ff81a3df946ab02f9510a9a3a7da4abe730587`,
+built with `uv build` from `git archive` of the tag (`twine check` passed).
+Published to `carbonteq/dev` by Posttrain run 36996695048.
 
 **Release candidate `0.9.0.post8`.** Post8 is the post7 asset receipt
 (`07ecac23`) plus one fix, "Agent-loop defaults declared in the trainer
