@@ -37,6 +37,37 @@ class _CustomSampler:
         self.kwargs = kwargs
 
 
+def test_fit_cleans_only_allocated_batches_when_recipe_reuses_evidence(monkeypatch):
+    """An optimizer-only recipe step still logs and commits its native counter."""
+    from verl.trainer.ppo.v1 import trainer_base
+
+    trainer = _StubTrainer.__new__(_StubTrainer)
+    trainer.config = OmegaConf.create({
+        "trainer": {"project_name": "test", "experiment_name": "reuse", "logger": [],
+                    "val_before_train": False, "total_epochs": 1, "save_freq": 1, "test_freq": 0},
+        "global_profiler": {"steps": None},
+    })
+    trainer.global_steps = 0
+    trainer.steps_per_epoch = trainer.total_training_steps = 2
+    trainer.step = MagicMock(side_effect=[
+        KVBatchMeta(partition_id="train", keys=["allocated"], tags=[{}]),
+        KVBatchMeta(partition_id="train", keys=[], tags=[]),
+    ])
+    for name in ("_reissue_inflight_prompts", "on_train_begin", "on_step_begin", "_start_profiling",
+                 "_stop_profiling", "_save_checkpoint", "_compute_metrics", "_shutdown_dump_executor"):
+        setattr(trainer, name, MagicMock())
+    trainer._consume_sync_metrics = MagicMock(return_value={})
+    tracking = MagicMock()
+    monkeypatch.setattr(trainer_base, "Tracking", MagicMock(return_value=tracking))
+    monkeypatch.setattr(trainer_base, "SkipManager", MagicMock())
+    clear = MagicMock()
+    monkeypatch.setattr(trainer_base.tq, "kv_clear", clear)
+    trainer.fit(MagicMock())
+    clear.assert_called_once_with(keys=["allocated"], partition_id="train")
+    assert trainer.step.call_count == trainer._save_checkpoint.call_count == tracking.log.call_count == 2
+    assert trainer.global_steps == 3
+
+
 def _trainer_with_filter_groups(filter_groups: dict, trainer_mode: str = "sync") -> _StubTrainer:
     trainer = _StubTrainer.__new__(_StubTrainer)
     trainer.trainer_mode = trainer_mode

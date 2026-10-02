@@ -2,6 +2,14 @@
 
 ## Status
 
+V1 empty-batch cleanup candidate (2026-10-02): recipe extensions can apply
+another optimizer update from retained evidence without allocating TransferQueue
+keys. V1 fit skips kv_clear for an empty batch, preserving save/log/counter
+handling. The CPU regression executes the actual fit loop over one allocated
+and one empty batch; all 15 trainer-base CPU tests pass. Base:
+ef5aac6ff92d5a69f72cfe222f0a409af4220314 on codex/resolved-engine-worker.
+Source publication is pending; pins and runtime adoption remain separate.
+
 Plain V1 recipe runner extension candidate (2026-10-02): expose TaskRunnerV1Base
 before Ray decoration and retain TaskRunnerV1 as its default Ray actor wrapper.
 Recipes can subclass the native manager lifecycle without Ray-private metadata

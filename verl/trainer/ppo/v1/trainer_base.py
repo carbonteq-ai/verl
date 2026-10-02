@@ -637,7 +637,10 @@ class PPOTrainer(ABC):
                 self._log_rollout_data(batch, self.timing_raw, rollout_data_dir)
 
             # 7. cleanup transfer queue
-            tq.kv_clear(keys=batch.keys, partition_id=batch.partition_id)
+            # Recipe extensions may reuse retained evidence for an optimizer
+            # update without allocating a fresh TransferQueue batch.
+            if batch.keys:
+                tq.kv_clear(keys=batch.keys, partition_id=batch.partition_id)
 
             dapo_filtered_reward_counts = metrics.pop(DAPO_FILTERED_REWARD_COUNTS_KEY, None)
             self.logger.log(data=metrics, step=self.global_steps)
